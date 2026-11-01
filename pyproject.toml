@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aftershock"
+version = "0.1.0"
+description = "Satellite-based building damage assessment after disasters: Siamese CNN, PostGIS, MC-Dropout uncertainty, Grad-CAM, DBSCAN hotspots"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Daksh Chugh" }]
+dependencies = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "numpy",
+    "pillow",
+    "shapely>=2.0",
+    "scikit-learn",
+    "pandas",
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+app = ["streamlit", "folium", "streamlit-folium"]
+xai = ["lime"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

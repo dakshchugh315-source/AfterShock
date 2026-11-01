@@ -1,0 +1,18 @@
+# data and model outputs (large / licensed: xBD must be downloaded by each user)
+data/
+runs/
+*.pt
+*.db
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# secrets and editor files
+.env
+.vscode/
+.idea/
+.DS_Store
