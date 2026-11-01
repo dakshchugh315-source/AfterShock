@@ -40,12 +40,20 @@ def evaluate(model, loader, device):
 
 
 def train(db_url=DB_URL, name="run", arch="siamese", epochs=10, batch_size=64, lr=3e-4, loss="focal",
-          pretrained=True, img_size=128, dropout=0.3, num_workers=2, limit=None, seed=42, runs_dir=None, log=print) -> dict:
+          pretrained=True, img_size=128, dropout=0.3, num_workers=2, limit=None, seed=42, runs_dir=None,
+          max_per_class=None, log=print) -> dict:
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     out = Path(runs_dir or RUNS_DIR) / name
     out.mkdir(parents=True, exist_ok=True)
     db, device = DB(db_url), pick_device()
     rows = {s: db.split_rows(s, limit) for s in ("train", "val", "test")}
+    if max_per_class:  # cap each damage class in TRAIN only (compute budget); val/test stay complete
+        rng = random.Random(seed)
+        capped = []
+        for c in range(4):
+            members = [r for r in rows["train"] if r[1] == c]
+            capped += rng.sample(members, min(max_per_class, len(members)))
+        rows["train"] = sorted(capped)
     log(f"device={device} train={len(rows['train'])} val={len(rows['val'])} test={len(rows['test'])}")
     if not rows["train"] or not rows["val"]:
         raise RuntimeError("Empty train/val split: run aftershock.ingest first")
@@ -89,7 +97,8 @@ def train(db_url=DB_URL, name="run", arch="siamese", epochs=10, batch_size=64, l
         w.writeheader(); w.writerows(history)
     model.load_state_dict(torch.load(out / "best.pt", map_location=device, weights_only=False)["state_dict"])
     test = evaluate(model, test_dl, device) if rows["test"] else {}
-    result = {**meta, "best_val_macro_f1": best, "test": test, "epochs": epochs, "train_size": len(rows["train"])}
+    result = {**meta, "best_val_macro_f1": best, "test": test, "epochs": epochs, "train_size": len(rows["train"]),
+              "max_per_class": max_per_class, "pretrained": pretrained}
     (out / "metrics.json").write_text(json.dumps(result, indent=2))
     log(f"best val macro-F1={best:.4f}  test macro-F1={test.get('macro_f1', float('nan')):.4f}  -> {out}")
     return result
@@ -109,9 +118,10 @@ def main(argv=None):
     ap.add_argument("--dropout", type=float, default=0.3)
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--limit", type=int, help="cap rows per split (quick experiments)")
+    ap.add_argument("--max-per-class", type=int, help="cap each class in the TRAIN split (balanced, smaller compute)")
     a = ap.parse_args(argv)
     train(a.db, a.name, a.arch, a.epochs, a.batch_size, a.lr, a.loss, not a.no_pretrained, a.img_size, a.dropout,
-          a.num_workers, a.limit)
+          a.num_workers, a.limit, max_per_class=a.max_per_class)
 
 
 if __name__ == "__main__":
