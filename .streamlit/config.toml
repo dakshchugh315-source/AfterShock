@@ -1,0 +1,23 @@
+# AfterShock dashboard theme: dark "mission control" look.
+[theme]
+base = "dark"
+primaryColor = "#ff7a45"
+backgroundColor = "#070b18"
+secondaryBackgroundColor = "#111a2e"
+textColor = "#e7ebf5"
+linkColor = "#5cc8ff"
+borderColor = "#1f2a44"
+showWidgetBorder = true
+baseRadius = "0.7rem"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap, sans-serif"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap, monospace"
+chartCategoricalColors = ["#5cc8ff", "#ff7a45", "#2dd4a3", "#8b7cf6"]
+
+[theme.sidebar]
+backgroundColor = "#0a1122"
+secondaryBackgroundColor = "#131d34"
+borderColor = "#1f2a44"
+
+[client]
+toolbarMode = "minimal"

@@ -42,7 +42,7 @@ BLUE, ORANGE, AQUA, VIOLET = "#2a78d6", "#eb6834", "#1baf7a", "#6250d6"
 # Status palette (severity, not identity): good -> critical.
 GOOD, WARNING, SERIOUS, CRITICAL = "#0ca30c", "#fab219", "#ec835a", "#d03b3b"
 COLORS = {0: GOOD, 1: WARNING, 2: SERIOUS, 3: CRITICAL}
-INK_MUTED, GRID = "#898781", "#e1e0d9"
+INK_MUTED, GRID = "#94a0c2", "#1f2a44"  # tuned for the dark theme in .streamlit/config.toml
 # Known-good disasters to default to (busy + has hotspots) - picked over an alphabetical default
 # (e.g. guatemala-volcano has only 168 buildings / 7 damaged, a flat first impression).
 PREFERRED_DEFAULT_DISASTERS = ["hurricane-harvey", "hurricane-michael", "socal-fire"]
@@ -169,21 +169,63 @@ st.markdown(f"""
 .block-container {{padding-top: 1.6rem; max-width: 1500px;}}
 h1 {{font-weight: 800 !important; letter-spacing: -0.02em;}}
 h2, h3, h4 {{font-weight: 700 !important;}}
-[data-testid="stMetric"] {{
-    background: linear-gradient(135deg, {VIOLET}14, {VIOLET}05);
-    border: 1px solid {VIOLET}30;
-    border-radius: 14px;
-    padding: 14px 16px 10px;
+/* ---------- Mission-control theme (colours in .streamlit/config.toml) ---------- */
+.stApp {{
+    background:
+        radial-gradient(1200px 600px at 85% -10%, #2a1f5c55, transparent 60%),
+        radial-gradient(900px 500px at -10% 30%, #0d3b4f55, transparent 60%),
+        linear-gradient(#ffffff05 1px, transparent 1px) 0 0 / 100% 42px,
+        linear-gradient(90deg, #ffffff05 1px, transparent 1px) 0 0 / 42px 100%,
+        #070b18;
 }}
+header[data-testid="stHeader"] {{background: transparent;}}
+section[data-testid="stSidebar"] {{
+    background: linear-gradient(180deg, #0c1530, #070b18) !important;
+    border-right: 1px solid #1f2a44;
+}}
+.as-brand {{display:flex; align-items:center; gap:10px; padding:4px 0 14px; margin-bottom:10px; border-bottom:1px solid #1f2a44;}}
+.as-brand-logo {{width:38px; height:38px; border-radius:11px; display:grid; place-items:center; font-size:20px;
+    background:linear-gradient(135deg, {ORANGE}, {VIOLET}); box-shadow:0 8px 20px -8px {ORANGE};}}
+.as-brand-name {{font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:1.1rem; color:#fff; line-height:1.1;}}
+.as-brand-sub {{font-size:0.72rem; color:#8f9bbd; letter-spacing:.08em; text-transform:uppercase;}}
+.as-side-label {{font-size:0.7rem; letter-spacing:.12em; text-transform:uppercase; color:#8f9bbd; margin:14px 0 2px;}}
+
+h1, h2, h3, h4 {{letter-spacing:-0.015em;}}
+h3 {{color:#ffffff !important;}}
+
+/* Tabs as a segmented pill bar */
+[role="tablist"] {{gap:2px; justify-content:space-between; background:#0f172bcc; border:1px solid #1f2a44; padding:6px; border-radius:14px;
+    backdrop-filter:blur(8px);}}
+[role="tablist"] {{border-bottom:0 !important;}}
+[data-testid="stTab"], button[data-baseweb="tab"] {{border-radius:10px !important; padding:7px 9px !important; margin:0 !important; height:auto !important; border-bottom:0 !important;}}
+[data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {{background:linear-gradient(135deg, {ORANGE}33, {VIOLET}33) !important;
+    box-shadow:inset 0 0 0 1px {ORANGE}66;}}
+[data-testid="stTab"] p, button[data-baseweb="tab"] p {{font-weight:600 !important; font-size:0.86rem !important; white-space:nowrap;}}
+[data-testid="stTab"][aria-selected="true"] p {{color:#ffffff !important;}}
+[data-baseweb="tab-border"] {{display:none;}}
+
+/* Glass panels for every container type */
+[data-testid="stMetric"], div[data-testid="stExpander"], [data-testid="stDataFrame"], [data-testid="stAlert"],
+[data-testid="stPlotlyChart"], [data-testid="stCode"] {{
+    background: linear-gradient(160deg, #131d34cc, #0b1224cc) !important;
+    border: 1px solid #1f2a44 !important; border-radius: 14px !important;
+    box-shadow: 0 10px 30px -18px #000;
+}}
+[data-testid="stMetric"] {{padding:14px 16px 10px;}}
+[data-testid="stPlotlyChart"] {{padding:6px;}}
+[data-testid="stMetricValue"] {{background:linear-gradient(90deg, #ffffff, #b9c4ff); -webkit-background-clip:text;
+    background-clip:text; color:transparent !important;}}
+[data-testid="stAlert"] {{border-left:3px solid {ORANGE} !important;}}
+.stButton > button {{background:linear-gradient(135deg, {ORANGE}, #e8505b) !important; color:#fff !important;
+    border:0 !important; font-weight:600; box-shadow:0 8px 20px -10px {ORANGE}; transition:transform .2s, box-shadow .2s;}}
+.stButton > button:hover {{transform:translateY(-2px); box-shadow:0 12px 26px -10px {ORANGE};}}
+::-webkit-scrollbar {{width:10px; height:10px;}}
+::-webkit-scrollbar-thumb {{background:#24304d; border-radius:10px;}}
+::-webkit-scrollbar-track {{background:transparent;}}
 [data-testid="stMetricValue"] {{font-weight: 800 !important; font-size: clamp(1.2rem, 2.2vw, 2rem) !important;}}
 /* Let metric labels/values wrap instead of being cut off with an ellipsis at narrower widths. */
 [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] *, [data-testid="stMetricValue"], [data-testid="stMetricValue"] * {{
     white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
-}}
-div[data-testid="stExpander"] {{
-    border: 1px solid {VIOLET}40;
-    border-radius: 14px;
-    background: {VIOLET}08;
 }}
 img {{border-radius: 10px;}}
 hr {{margin: 0.6rem 0 1.2rem;}}
@@ -235,9 +277,9 @@ iframe {{pointer-events:auto;}}
 [data-testid="stMetric"]:hover {{transform:perspective(700px) rotateX(6deg) translateY(-3px); box-shadow:0 14px 28px -14px {VIOLET};}}
 
 /* Tabs: content fades in, active tab gets a gradient underline */
-[data-baseweb="tab-panel"] {{animation:as-fade-up .45s ease both;}}
-button[data-baseweb="tab"] {{transition:color .2s, transform .2s;}}
-button[data-baseweb="tab"]:hover {{transform:translateY(-2px);}}
+[role="tabpanel"], [data-baseweb="tab-panel"] {{animation:as-fade-up .45s ease both;}}
+[data-testid="stTab"], button[data-baseweb="tab"] {{transition:color .2s, transform .2s, background .2s;}}
+[data-testid="stTab"]:hover, button[data-baseweb="tab"]:hover {{transform:translateY(-2px);}}
 [data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ORANGE}) !important; height:3px !important;}}
 [data-testid="stPlotlyChart"], [data-testid="stDeckGlJsonChart"] {{animation:as-fade-up .6s ease both;}}
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{animation:none !important; transition:none !important;}} }}
@@ -307,8 +349,8 @@ def lift(gdf):
     return best, worst, (b - w) * 100, (b / w - 1) * 100
 
 tab_overview, tab_map, tab_explain, tab_prob, tab_sql, tab_quality = st.tabs(
-    ["🏠 Overview & honesty", "🗺️ Map & hotspots", "🧠 Explainability (Grad-CAM)",
-     "🔎 Probabilistic DB queries", "🗄️ Database & SQL", "📈 Model quality"])
+    ["🏠 Overview", "🗺️ Map & hotspots", "🧠 Grad-CAM (XAI)",
+     "🔎 Probabilistic DB", "🗄️ Database & SQL", "📈 Model quality"])
 
 # ============================================================== TAB: Overview & honesty
 with tab_overview:
@@ -402,11 +444,15 @@ if not versions:
 val_scores = {v: json.loads((Path(RUNS_DIR) / v / "metrics.json").read_text()).get("best_val_macro_f1", -1)
               for v in versions if (Path(RUNS_DIR) / v / "metrics.json").exists()}
 final_version = max(val_scores, key=val_scores.get) if val_scores else versions[0]
+st.sidebar.markdown("""<div class="as-brand"><div class="as-brand-logo">🛰️</div>
+<div><div class="as-brand-name">AfterShock</div><div class="as-brand-sub">Damage control panel</div></div></div>
+<div class="as-side-label">Model &amp; area</div>""", unsafe_allow_html=True)
 version = st.sidebar.selectbox("Model (for map / queries / explanations below)", versions,
                                index=versions.index(final_version), format_func=lambda v: f"{v} (final)" if v == final_version else v)
 disasters = [r[0] for r in db.execute("SELECT DISTINCT disaster FROM buildings").fetchall()]
 default_disaster = next((d for d in PREFERRED_DEFAULT_DISASTERS if d in disasters), disasters[0] if disasters else None)
 disaster = st.sidebar.selectbox("Disaster", disasters, index=disasters.index(default_disaster) if default_disaster in disasters else 0)
+st.sidebar.markdown('<div class="as-side-label">Filters</div>', unsafe_allow_html=True)
 min_conf = st.sidebar.slider("Minimum confidence on map", 0.0, 1.0, 0.0, 0.05)
 review_threshold = st.sidebar.slider("Send to human review if uncertainty ≥", 0.0, 1.0, 0.6, 0.05)
 
@@ -615,7 +661,7 @@ with tab_prob:
         reliability = cdf.groupby("bucket", observed=True).agg(n=("correct", "size"), observed_accuracy=("correct", "mean"),
                                                                  mean_confidence=("confidence", "mean")).reset_index()
         fig3 = go.Figure()
-        fig3.add_scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(color=GRID, dash="dash"), name="perfectly calibrated")
+        fig3.add_scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(color=INK_MUTED, dash="dash"), name="perfectly calibrated")
         fig3.add_scatter(x=reliability["mean_confidence"], y=reliability["observed_accuracy"], mode="markers+lines",
                           marker=dict(size=10, color=BLUE), line=dict(color=BLUE), name="this model",
                           hovertemplate="confidence ~%{x:.0%}<br>observed accuracy %{y:.0%}<extra></extra>")

@@ -18,6 +18,11 @@
     (one GeoJSON layer, hover shows class / confidence / uncertainty). Both map views now open on the
     biggest hotspot or the most-damaged ~1 km cell, instead of the plain mean (which landed on a school
     with no labelled buildings). The "no hotspots" message no longer suggests the disaster already selected.
+37. **Dark "mission control" theme**: `.streamlit/config.toml` (dark base, orange/violet accents, Inter +
+    Space Grotesk + JetBrains Mono fonts, minimal toolbar without the Deploy button). CSS: grid + glow
+    background, branded sidebar (sections "Model & area", "Filters"), tabs as a pill bar with shorter
+    labels, glass panels for metrics/tables/charts/alerts/code, gradient buttons. Plotly text/grid colours
+    tuned for dark.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
