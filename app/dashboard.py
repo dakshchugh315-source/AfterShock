@@ -546,6 +546,12 @@ hero_stats = [(f"{n:,}", label) for n, label in [
 ] if n is not None]
 with hero_slot:
     render_hero(hero_stats, final_version)
+    _n_dis = _count("SELECT COUNT(DISTINCT disaster) FROM buildings") or 0
+    if _n_dis < 10:
+        st.info(f"**Pilot database:** {_n_dis} disasters, {(_count('SELECT COUNT(*) FROM buildings') or 0):,} buildings, "
+                f"models trained on a laptop GPU. The full-scale experiment (10 disasters, 107,441 buildings, final "
+                f"model `siamese_fm_focal`, test macro-F1 0.632) is reported in the project report; every number on "
+                f"this page is computed live from this pilot database, so the two sets differ.", icon="🧪")
 st.sidebar.markdown("""<div class="as-brand"><div class="as-brand-logo">🛰️</div>
 <div><div class="as-brand-name">AfterShock</div><div class="as-brand-sub">Damage control panel</div></div></div>
 <div class="as-side-label">Model &amp; area</div>""", unsafe_allow_html=True)
@@ -873,12 +879,26 @@ with tab_explain:
         if not HAS_TORCH:
             st.info(LITE_NOTE)
         elif ckpt_path.exists():
-            with st.spinner("Computing Grad-CAM for this building…"):
-                pre_rgb, post_rgb, cam, pred, conf = live_gradcam(str(ckpt_path), db, uid)
-            st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf), width="stretch")
+            try:
+                with st.spinner("Computing Grad-CAM for this building…"):
+                    cam_out = live_gradcam(str(ckpt_path), db, uid)
+            except KeyError:  # this database has no stored image bytes for the building
+                cam_out = None
+                st.warning("The image crops for this building are not stored in this database, so Grad-CAM cannot run "
+                           "for it. Pick another building.")
+            try:
+                net_arch = json.loads((Path(RUNS_DIR) / net_for_cam / "metrics.json").read_text()).get("arch", "")
+            except Exception:
+                net_arch = ""
+            if cam_out:
+                pre_rgb, post_rgb, cam, pred, conf = cam_out
+                st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf,
+                                               uses_pre=net_arch != "post"), width="stretch")
             st.caption("Grad-CAM (Selvaraju et al., 2017): the gradient of the predicted class with respect to the "
                        "last convolutional features shows which parts of the input pushed the decision. Red = strong "
                        "influence, blue = ignored."
+                       + (f" `{net_for_cam}` is a post-only network: it decides from the after image alone, so the "
+                          f"before image is shown greyed out for reference." if net_arch == "post" else "")
                        + (f" `{version}` combines a network with test-time augmentation and calibration, and Grad-CAM "
                           f"needs one plain network, so this is `{net_for_cam}`. Its own prediction can differ from the "
                           f"verdict above." if net_for_cam != version else ""))
@@ -889,8 +909,10 @@ with tab_explain:
 with tab_prob:
     st.subheader("🎲 Counting with probabilities")
     exp_row = db.execute(
-        "SELECT COUNT(*), SUM(p.pred_idx = 3), SUM(p.p_destroyed), SUM(b.label_idx = 3), SUM(p.p_major + p.p_destroyed), "
-        "SUM(p.pred_idx >= 2) FROM predictions p JOIN buildings b ON b.uid = p.uid "
+        # CASE WHEN instead of SUM(boolean): works on both SQLite and PostgreSQL
+        "SELECT COUNT(*), SUM(CASE WHEN p.pred_idx = 3 THEN 1 ELSE 0 END), SUM(p.p_destroyed), "
+        "SUM(CASE WHEN b.label_idx = 3 THEN 1 ELSE 0 END), SUM(p.p_major + p.p_destroyed), "
+        "SUM(CASE WHEN p.pred_idx >= 2 THEN 1 ELSE 0 END) FROM predictions p JOIN buildings b ON b.uid = p.uid "
         "WHERE p.model_version = ? AND b.disaster = ? AND b.split = 'test'", (version, disaster)).fetchone()
     if exp_row and exp_row[0]:
         n_, hard_d, exp_d, true_d, exp_s, hard_s = exp_row
@@ -1270,13 +1292,13 @@ with tab_real:
                   help=f"test buildings with both a model prediction and an inspection within the radius. "
                        f"All matched buildings (any split): {xall['n']:,}; mean distance {(res['dist'][0] or 0):.1f} m")
         if mv["n"]:
-            k3.metric("Model vs inspectors", f"{mv['destroyed']['accuracy']:.1%}",
-                      help=f"destroyed vs not, on {mv['n']:,} test buildings with an inspection. "
+            k3.metric("Model agrees (destroyed vs not)", f"{mv['destroyed']['accuracy']:.1%}",
+                      help=f"Two classes only: destroyed vs not. 4-class agreement: {mv['exact']:.1%}. Computed on {mv['n']:,} test buildings with an inspection. "
                            f"Recall {mv['destroyed']['recall']:.1%}, precision {mv['destroyed']['precision']:.1%}.")
         else:
-            k3.metric("Model vs inspectors", "–", help="this model has no test predictions with a matched inspection")
-        k4.metric("xBD labels vs inspectors", f"{xv['destroyed']['accuracy']:.1%}",
-                  help=f"destroyed vs not, on the same {xv['n']:,} buildings. On all {xall['n']:,} matched buildings: "
+            k3.metric("Model agrees (destroyed vs not)", "–", help="this model has no test predictions with a matched inspection")
+        k4.metric("xBD labels agree (destroyed vs not)", f"{xv['destroyed']['accuracy']:.1%}",
+                  help=f"Two classes only. 4-class agreement: {xv['exact']:.1%}. Computed on the same {xv['n']:,} buildings. On all {xall['n']:,} matched buildings: "
                        f"{xall['destroyed']['accuracy']:.1%}")
 
         def cm_fig(cm, title, xname):

@@ -191,8 +191,9 @@ def _note(width, text):
     return img
 
 
-def gradcam_sheet(pre_rgb, post_rgb, cam, network, pred, conf, size=420):
-    """pre_rgb/post_rgb: HxWx3 uint8 (the network's own input); cam: HxW in 0..1."""
+def gradcam_sheet(pre_rgb, post_rgb, cam, network, pred, conf, size=420, uses_pre=True):
+    """pre_rgb/post_rgb: HxWx3 uint8 (the network's own input); cam: HxW in 0..1.
+    uses_pre=False for a post-only network: its 'before' panel is shown greyed out, marked as not used."""
     def up(arr):
         return Image.fromarray(arr).resize((size, size), Image.LANCZOS).filter(
             ImageFilter.UnsharpMask(radius=2, percent=80, threshold=2))
@@ -200,10 +201,18 @@ def gradcam_sheet(pre_rgb, post_rgb, cam, network, pred, conf, size=420):
     heat = _ramp(np.asarray(Image.fromarray((cam * 255).astype(np.uint8)).resize((px, px), Image.BILINEAR)) / 255.0,
                  JET_STOPS)
     overlay = (post_rgb.astype(np.float32) * 0.55 + heat * 0.45).clip(0, 255).astype(np.uint8)
-    p1 = _stack_col(_header(up(pre_rgb), "MODEL INPUT · BEFORE", f"{px}×{px} px, what {network} sees", (96, 165, 250)),
-                    _note(size, f"Upscaled from {px} px for display, nothing added"))
-    p2 = _stack_col(_header(up(post_rgb), "MODEL INPUT · AFTER", f"{px}×{px} px", (244, 63, 94)),
-                    _note(size, "Same crop after the disaster"))
+    if uses_pre:
+        p1 = _stack_col(_header(up(pre_rgb), "MODEL INPUT · BEFORE", f"{px}×{px} px, what {network} sees", (96, 165, 250)),
+                        _note(size, f"Upscaled from {px} px for display, nothing added"))
+    else:
+        grey = ImageOps.grayscale(up(pre_rgb)).point(lambda v: v * 0.45).convert("RGB")
+        p1 = _stack_col(_header(grey, "BEFORE · NOT USED", f"{network} is post-only: it never sees this image",
+                                (110, 119, 140)),
+                        _note(size, "Shown for reference only"))
+    p2 = _stack_col(_header(up(post_rgb), "MODEL INPUT · AFTER", f"{px}×{px} px, what {network} sees" if not uses_pre
+                            else f"{px}×{px} px", (244, 63, 94)),
+                    _note(size, f"Upscaled from {px} px for display, nothing added" if not uses_pre
+                          else "Same crop after the disaster"))
     p3 = _stack_col(_header(up(overlay), "GRAD-CAM", f"{network} predicts {pred} ({conf:.0%})", (167, 139, 250)),
                     _legend(size, JET_STOPS, "ignored", "drove the decision", "Where the network looked"))
     return _stack_row([p1, p2, p3])
