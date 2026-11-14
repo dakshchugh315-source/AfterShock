@@ -30,6 +30,12 @@
     confidence, uncertainty, match/mismatch with the xBD label, "human review" vs "model decides") and a bar
     chart of its four stored probabilities. Header: one-line question + pipeline flow + live COUNT(*) stats
     (buildings, predictions, pending review_queue rows, hotspots).
+40. **3D city view** (`app/city3d.py`, replaces the pydeck columns): every building's real footprint polygon is
+    extruded on Esri satellite imagery with deck.gl 8.9 (lit, shaded 3D blocks; height + colour = predicted
+    damage). Buildings rise from the ground on load, the camera orbits until the user touches the map,
+    destroyed buildings pulse red and DBSCAN hotspots are violet rings. HUD: legend, live counts and
+    buttons (orbit, replay, top view, tilt). `prefers-reduced-motion` disables the animation. The map tab is
+    now full width. Data drawn = the same `predictions` rows; nothing about the model changes.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

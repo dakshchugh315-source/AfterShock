@@ -15,7 +15,6 @@ import folium
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import pydeck as pdk
 import streamlit as st
 import torch
 from PIL import Image, ImageDraw, ImageFilter
@@ -23,6 +22,8 @@ from shapely import wkt as shapely_wkt
 from streamlit_folium import st_folium
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from city3d import render_city3d  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
 from aftershock.data import png_to_tensor  # noqa: E402
 from aftershock.db import DB  # noqa: E402
@@ -529,13 +530,14 @@ if df.empty:
 
 # ============================================================== TAB: Map & hotspots
 with tab_map:
-    left, right = st.columns([3, 2])
+    # Map full width (the 3D city needs room); hotspot + per-disaster tables below it.
+    left, right = st.container(), st.container()
     with left:
         st.subheader("🗺️ Damage map")
         shown = df[(df["confidence"] >= min_conf) & df["lon"].notna()]
         hotspot_rows = db.execute("SELECT cluster_id, n_buildings, lon, lat, mean_confidence FROM hotspots "
                                    "WHERE model_version = ? AND disaster = ?", (version, disaster)).fetchall()
-        view_mode = st.radio("View", ["🏙️ 3D damage towers", "🛰️ 2D satellite"], horizontal=True,
+        view_mode = st.radio("View", ["🏙️ 3D city", "🛰️ 2D satellite"], horizontal=True,
                              label_visibility="collapsed", key="map_view_mode")
         # A disaster spans tens of km, so the plain mean can land on an empty field. Both views open on
         # the biggest hotspot, else on the ~1 km grid cell with the most major/destroyed predictions.
@@ -548,30 +550,16 @@ with tab_map:
                 cell = sev.assign(gx=(sev["lon"] / 0.01).round(), gy=(sev["lat"] / 0.01).round()).groupby(["gx", "gy"])
                 members = cell.get_group(cell.size().idxmax())
                 c_lon, c_lat = float(members["lon"].mean()), float(members["lat"].mean())
+        if len(shown):
+            # Real footprint polygons (lon/lat) for every shown building - used by both views.
+            fp = dict(db.execute(
+                "SELECT b.uid, b.footprint_wkt FROM buildings b JOIN predictions p ON p.uid = b.uid "
+                "WHERE p.model_version = ? AND b.disaster = ?", (version, disaster)).fetchall())
         if len(shown) and view_mode.startswith("🏙️"):
-            # One column per building: height and colour = predicted severity, so damaged blocks
-            # stand out as "towers". Hotspots (DBSCAN) are translucent violet discs on the ground.
-            sev_rgb = {i: [int(COLORS[i][k:k + 2], 16) for k in (1, 3, 5)] for i in COLORS}
-            deck_df = shown[["uid", "lon", "lat", "pred_idx", "predicted", "confidence", "uncertainty"]].copy()
-            deck_df["height"] = deck_df["pred_idx"].map({0: 4, 1: 25, 2: 60, 3: 110}) * (0.5 + deck_df["confidence"])
-            deck_df["color"] = deck_df["pred_idx"].map(lambda i: sev_rgb[i] + [230])
-            deck_df["conf_pct"] = (deck_df["confidence"] * 100).round(0)
-            deck_df["uncertainty"] = deck_df["uncertainty"].round(2)
-            layers = [pdk.Layer("ColumnLayer", data=deck_df, get_position=["lon", "lat"], get_elevation="height",
-                                elevation_scale=1.5, radius=7, get_fill_color="color", pickable=True, extruded=True,
-                                auto_highlight=True)]
-            if hotspot_rows:
-                hs_deck = pd.DataFrame(hotspot_rows, columns=["cluster_id", "n_buildings", "lon", "lat", "mean_confidence"])
-                layers.append(pdk.Layer("ScatterplotLayer", data=hs_deck, get_position=["lon", "lat"], get_radius=120,
-                                        get_fill_color=[98, 80, 214, 45], get_line_color=[98, 80, 214, 220],
-                                        stroked=True, line_width_min_pixels=2, pickable=False))
-            view =pdk.ViewState(latitude=c_lat, longitude=c_lon, zoom=15, pitch=55, bearing=-25)
-            st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view, map_provider="carto", map_style="dark",
-                                     tooltip={"html": "<b>{predicted}</b> · {conf_pct}% sure<br/>uncertainty {uncertainty}",
-                                              "style": {"fontSize": "12px"}}),
-                            height=520)
-            st.caption("Drag to pan, right-drag (or Ctrl+drag) to rotate and tilt. Column height and colour = predicted "
-                       "damage; violet discs = DBSCAN hotspots.")
+            # Each footprint is extruded on satellite imagery: height + colour = predicted damage (app/city3d.py).
+            render_city3d(shown, fp, hotspot_rows, (c_lon, c_lat), disaster.replace("-", " ").title(), height=640)
+            st.caption("Buildings rise from their real footprints; destroyed ones pulse red, DBSCAN hotspots are violet "
+                       "rings. The camera orbits until you touch the map. Hover a building for its confidence.")
         elif len(shown):
             fmap = folium.Map(location=[c_lat, c_lon], zoom_start=17, tiles=None,
                                scrollWheelZoom=False)  # don't hijack the page's scroll - click the map to zoom instead
@@ -583,9 +571,6 @@ with tab_map:
                 attr="Esri", name="Labels", control=False, overlay=True).add_to(fmap)
             # Outline every building's real footprint polygon (stored in buildings.footprint_wkt, lon/lat)
             # in its predicted-damage colour, so the marks sit exactly on the roofs in the satellite image.
-            fp = dict(db.execute(
-                "SELECT b.uid, b.footprint_wkt FROM buildings b JOIN predictions p ON p.uid = b.uid "
-                "WHERE p.model_version = ? AND b.disaster = ?", (version, disaster)).fetchall())
             features = []
             for r in shown.itertuples():
                 if fp.get(r.uid):
