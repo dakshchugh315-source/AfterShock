@@ -3,6 +3,7 @@
 streamlit run app/dashboard.py
 """
 import base64
+import importlib.util
 import json
 import os
 import sqlite3
@@ -21,19 +22,18 @@ from streamlit_folium import st_folium
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cloud_data  # noqa: E402
+if cloud_data.needed(Path(__file__).resolve().parents[1]):  # hosted: fetch the public data bundle first
+    cloud_data.ensure()
 from city3d import render_city3d, render_compare3d  # noqa: E402
 import figures  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
 from aftershock.db import DB  # noqa: E402
-try:  # PyTorch is optional: the hosted "lite" demo runs without it (no live Grad-CAM / ai_predict there)
-    from aftershock.data import denormalize, png_to_tensor  # noqa: E402
-    from aftershock.explain import gradcam  # noqa: E402
-    from aftershock.model import load_checkpoint  # noqa: E402
-    HAS_TORCH = os.getenv("AFTERSHOCK_LITE") != "1"
-except ImportError:
-    HAS_TORCH = False
-LITE_NOTE = ("This hosted demo runs without PyTorch and without the image bytes, to fit a small free server; "
-             "live Grad-CAM and ai_predict() run in the full local version.")
+# PyTorch is imported only when a network is actually run (Grad-CAM, ai_predict), which keeps memory low on a
+# small server; without PyTorch installed the rest of the app still works.
+HAS_TORCH = importlib.util.find_spec("torch") is not None and os.getenv("AFTERSHOCK_LITE") != "1"
+LITE_NOTE = ("PyTorch is not available on this server, so live Grad-CAM and ai_predict() are switched off here; "
+             "they run in the full local version.")
 from aftershock.sqlai import register_functions  # noqa: E402
 from aftershock import fieldcheck  # noqa: E402
 
@@ -115,6 +115,7 @@ def bootstrap_macro_f1_ci(confusion_matrix, n_boot: int = 500, seed: int = 0):
 
 @st.cache_resource(show_spinner=False)
 def get_model(ckpt_path: str):
+    from aftershock.model import load_checkpoint  # lazy: loads PyTorch on first use
     model, ckpt = load_checkpoint(ckpt_path, "cpu")
     return model, ckpt
 
@@ -122,6 +123,8 @@ def get_model(ckpt_path: str):
 def live_gradcam(ckpt_path: str, db: DB, uid: str):
     """Grad-CAM computed on the fly for a building that wasn't in the precomputed batch,
     instead of dead-ending the demo on a 'run this command yourself' message."""
+    from aftershock.data import denormalize, png_to_tensor  # lazy PyTorch imports
+    from aftershock.explain import gradcam
     model, ckpt = get_model(ckpt_path)
     pre_png, post_png = db.crop_bytes(uid)
     pre_t, post_t = png_to_tensor(pre_png, ckpt["img_size"]), png_to_tensor(post_png, ckpt["img_size"])

@@ -1,14 +1,11 @@
-"""Assemble the two folders to upload to Hugging Face (free hosting of the FULL dashboard):
+"""Build the public data bundle the hosted dashboard downloads on start (app/cloud_data.py):
 
     python scripts/prepare_hf.py --user <hf-username>
+    hf upload <user>/aftershock-data build/hf_data . --repo-type dataset      (after `hf auth login`)
 
-build/hf_space/  -> Space repo  <user>/aftershock       (code + Dockerfile + Space card; Docker SDK)
-build/hf_data/   -> dataset repo <user>/aftershock-data (aftershock.db, checkpoints, results, test tiles)
-
-Upload (after `hf auth login`):
-    hf upload <user>/aftershock-data build/hf_data . --repo-type dataset
-    hf upload <user>/aftershock      build/hf_space . --repo-type space
-Only tiles of buildings that have predictions (the test split) are bundled; nothing is recomputed.
+build/hf_data/ = aftershock.db, checkpoints of models with stored predictions, result files, and the original
+xBD tiles of the test buildings. Nothing is recomputed. The app itself is hosted on Streamlit Community Cloud
+from the GitHub repo (entry point app/dashboard.py, dependencies app/requirements.txt).
 """
 import argparse
 import shutil
@@ -16,30 +13,6 @@ import sqlite3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPACE_CARD = """---
-title: AfterShock
-emoji: 🛰️
-colorFrom: indigo
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
-license: cc-by-nc-sa-4.0
-short_description: Satellite building-damage assessment with AI inside the DB
----
-
-# AfterShock
-
-Building-damage assessment from pre/post-disaster satellite images (xBD), with the model's probabilities,
-uncertainty, triggers, views and a real-world check against CAL FIRE field inspections stored in SQL.
-Course project, *Data Management and AI Integration*, Bennett University (Daksh Chugh).
-
-This Space runs the full Streamlit dashboard (PyTorch on CPU, live Grad-CAM). Data is downloaded on start from
-the dataset repo [{data_repo}](https://huggingface.co/datasets/{data_repo}). The first start after a pause takes
-1-2 minutes.
-
-Data: xBD (Gupta et al., 2019, CC BY-NC-SA 4.0); CAL FIRE Damage Inspection (DINS), public data.
-"""
 DATA_CARD = """---
 license: cc-by-nc-sa-4.0
 pretty_name: AfterShock demo bundle
@@ -65,18 +38,8 @@ def main():
     ap.add_argument("--user", required=True, help="your Hugging Face username")
     a = ap.parse_args()
     data_repo = f"{a.user}/aftershock-data"
-    space, data = ROOT / "build" / "hf_space", ROOT / "build" / "hf_data"
-    shutil.rmtree(space, ignore_errors=True)
+    data = ROOT / "build" / "hf_data"
     shutil.rmtree(data, ignore_errors=True)
-
-    # ---- Space: code only
-    for d in ("app", "src/aftershock", ".streamlit", "hf"):
-        shutil.copytree(ROOT / d, space / d, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "Dockerfile"))
-    docker = (ROOT / "hf" / "Dockerfile").read_text(encoding="utf-8")
-    docker = docker.replace("EXPOSE 7860", f"ENV AFTERSHOCK_DATASET={data_repo}\nEXPOSE 7860")
-    (space / "Dockerfile").write_text(docker, encoding="utf-8", newline="\n")
-    (space / "hf" / "start.sh").write_text((ROOT / "hf" / "start.sh").read_text(encoding="utf-8"), newline="\n")
-    (space / "README.md").write_text(SPACE_CARD.format(data_repo=data_repo), encoding="utf-8")
 
     # ---- dataset: database, run files, test tiles
     copy(ROOT / "data" / "aftershock.db", data / "data" / "aftershock.db")
@@ -99,11 +62,9 @@ def main():
     (data / "README.md").write_text(DATA_CARD, encoding="utf-8")
 
     size = lambda d: sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / 1e9
-    print(f"build/hf_space: {sum(1 for f in space.rglob('*') if f.is_file())} files")
     print(f"build/hf_data:  {size(data):.2f} GB, {len(tiles)} tiles, checkpoints for: "
           f"{sorted(p.parent.name for p in (data / 'runs').rglob('best.pt'))}")
-    print(f"\nnext:\n  hf upload {data_repo} build/hf_data . --repo-type dataset\n"
-          f"  hf upload {a.user}/aftershock build/hf_space . --repo-type space")
+    print(f"\nnext:  hf upload {data_repo} build/hf_data . --repo-type dataset")
 
 
 if __name__ == "__main__":

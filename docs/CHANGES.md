@@ -108,10 +108,14 @@
     Database & SQL: an entity-relationship diagram drawn from the live schema (PRAGMA table_info) with the foreign
     keys of the PostgreSQL schema. Map: duplicate legend under the 3D view removed. Header globe: real Earth
     (NASA Blue Marble, public domain, app/assets/) rotating behind a shaded sphere.
-54. **Free hosting of the FULL app on Hugging Face Spaces** (`hf/`, `scripts/prepare_hf.py`): Docker image with
-    CPU PyTorch; code in the Space, the 1.9 GB data bundle (database, checkpoints, results, the 100 test tiles) in
-    a dataset repo, downloaded on start. PyTorch is now an optional import (AFTERSHOCK_LITE=1 or no torch: the app
-    still runs, Grad-CAM/ai_predict show a note). Figures fall back to DejaVu fonts on Linux.
+54. **Free hosting of the FULL app.** Hugging Face now needs a PRO plan to run Docker/Python Spaces on its free
+    CPU, so the app is hosted on **Streamlit Community Cloud** (from GitHub; entry point `app/dashboard.py`,
+    CPU-only PyTorch pinned in `app/requirements.txt`, DejaVu fonts via `packages.txt`). The 1.94 GB data
+    bundle (database, checkpoints, results, the 100 test tiles) is the public Hugging Face dataset
+    `daksh-ai/aftershock-data` (built by `scripts/build_data_bundle.py`); `app/cloud_data.py` downloads it on the
+    first start when no local database exists, without a login. PyTorch is imported only when a network runs.
+    Verified on a clean environment with no local data: first start 141 s incl. download, 0 errors on every
+    tab and button.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
