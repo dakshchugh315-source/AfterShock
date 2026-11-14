@@ -208,7 +208,7 @@ h3 {{color:#ffffff !important;}}
 [data-baseweb="tab-border"] {{display:none;}}
 
 /* Glass panels for every container type */
-[data-testid="stMetric"], div[data-testid="stExpander"], [data-testid="stDataFrame"], [data-testid="stAlert"],
+[data-testid="stMetric"], div[data-testid="stExpander"], [data-testid="stAlert"],
 [data-testid="stPlotlyChart"], [data-testid="stCode"] {{
     background: linear-gradient(160deg, #131d34cc, #0b1224cc) !important;
     border: 1px solid #1f2a44 !important; border-radius: 14px !important;
@@ -276,15 +276,17 @@ iframe {{pointer-events:auto;}}
     animation:as-fade-up .6s ease both; transform-style:preserve-3d;}}
 .as-tile:hover {{transform:perspective(700px) rotateX(7deg) rotateY(-7deg) translateY(-4px);
     box-shadow:0 18px 35px -14px var(--acc);}}
-[data-testid="stMetric"] {{transition:transform .3s, box-shadow .3s; animation:as-fade-up .6s ease both;}}
+[data-testid="stMetric"] {{transition:transform .3s, box-shadow .3s; animation:as-fade .6s ease;}}
 [data-testid="stMetric"]:hover {{transform:perspective(700px) rotateX(6deg) translateY(-3px); box-shadow:0 14px 28px -14px {VIOLET};}}
 
 /* Tabs: content fades in, active tab gets a gradient underline */
-[role="tabpanel"], [data-baseweb="tab-panel"] {{animation:as-fade-up .45s ease both;}}
+/* opacity only: a transform here would trap fullscreen tables/charts inside the tab */
+@keyframes as-fade {{from {{opacity:0;}} to {{opacity:1;}}}}
+[role="tabpanel"], [data-baseweb="tab-panel"] {{animation:as-fade .4s ease;}}  /* no fill-mode: a lingering animation makes a stacking context */
 [data-testid="stTab"], button[data-baseweb="tab"] {{transition:color .2s, transform .2s, background .2s;}}
 [data-testid="stTab"]:hover, button[data-baseweb="tab"]:hover {{transform:translateY(-2px);}}
 [data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ACCENT}) !important; height:3px !important;}}
-[data-testid="stPlotlyChart"], [data-testid="stDeckGlJsonChart"] {{animation:as-fade-up .6s ease both;}}
+[data-testid="stPlotlyChart"] {{animation:as-fade .6s ease;}}
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{animation:none !important; transition:none !important;}} }}
 .as-eyebrow {{font-size:0.72rem; letter-spacing:.14em; text-transform:uppercase; color:#67e8f9; margin-bottom:4px;}}
 .as-hero .as-sub {{max-width:820px; line-height:1.5;}}
@@ -911,7 +913,7 @@ with tab_sql:
     else:
         st.subheader("Schema")
         st.dataframe(schema_overview(db_url), hide_index=True, width="stretch",
-                     column_config={"rows": st.column_config.NumberColumn(format="%d"),
+                     column_config={"rows": st.column_config.NumberColumn(format="localized"),
                                     "keys / constraints": st.column_config.TextColumn(width="large")})
 
         st.subheader("Preset queries")

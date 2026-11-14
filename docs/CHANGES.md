@@ -42,6 +42,10 @@
     major #fb923c, destroyed #f43f5e.
 42. Verdict card no longer headlines an unsure arg-max as an answer: above the review threshold it says
     "Unsure · leaning <top class> X% vs <second class> Y%" in neutral grey, with a one-line reason.
+43. **Fullscreen tables fixed.** The tab fade-in kept a filling CSS animation on the tab panel, which creates a
+    stacking context, so a table opened fullscreen was trapped under the sidebar with its first column hidden.
+    Animations are now opacity-only with no fill-mode, and tables keep Streamlit's own styling. Schema row
+    counts use thousands separators.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
