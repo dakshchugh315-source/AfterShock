@@ -183,13 +183,12 @@ h3 {{color:#ffffff !important;}}
 
 /* Glass panels for every container type */
 [data-testid="stMetric"], div[data-testid="stExpander"], [data-testid="stAlert"],
-[data-testid="stPlotlyChart"], [data-testid="stCode"] {{
+[data-testid="stCode"] {{
     background: linear-gradient(160deg, #131d34cc, #0b1224cc) !important;
     border: 1px solid #1f2a44 !important; border-radius: 14px !important;
     box-shadow: 0 10px 30px -18px #000;
 }}
 [data-testid="stMetric"] {{padding:14px 16px 10px;}}
-[data-testid="stPlotlyChart"] {{padding:6px;}}
 [data-testid="stMetricValue"] {{background:linear-gradient(90deg, #ffffff, #b9c4ff); -webkit-background-clip:text;
     background-clip:text; color:transparent !important;}}
 [data-testid="stAlert"] {{border-left:3px solid {ACCENT} !important;}}
@@ -267,7 +266,6 @@ iframe {{pointer-events:auto;}}
 [data-testid="stTab"], button[data-baseweb="tab"] {{transition:color .2s, transform .2s, background .2s;}}
 [data-testid="stTab"]:hover, button[data-baseweb="tab"]:hover {{transform:translateY(-2px);}}
 [data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ACCENT}) !important; height:3px !important;}}
-[data-testid="stPlotlyChart"] {{animation:as-fade .6s ease;}}
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{animation:none !important; transition:none !important;}} }}
 .as-eyebrow {{font-size:0.72rem; letter-spacing:.14em; text-transform:uppercase; color:#67e8f9; margin-bottom:4px;}}
 .as-hero .as-sub {{max-width:820px; line-height:1.5;}}
@@ -335,7 +333,6 @@ def render_hero(stats=None, model=None):
       satellite images building by building, stores every answer as probabilities in SQL, and sends the unsure ones to a person.</div>
     <div class="as-flow">{flow}</div>
     {stat_html}
-    <div class="as-foot">Data Management and AI Integration · Bennett University · Daksh Chugh{model_txt}</div>
   </div>
 </div>""", unsafe_allow_html=True)
 
