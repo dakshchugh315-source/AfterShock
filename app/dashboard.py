@@ -2,7 +2,6 @@
 
 streamlit run app/dashboard.py
 """
-import io
 import json
 import os
 import sqlite3
@@ -15,20 +14,18 @@ import folium
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from scipy.ndimage import gaussian_filter
 import streamlit as st
-import torch
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from shapely import wkt as shapely_wkt
 from streamlit_folium import st_folium
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from city3d import render_city3d, render_compare3d  # noqa: E402
+import figures  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
-from aftershock.data import png_to_tensor  # noqa: E402
+from aftershock.data import denormalize, png_to_tensor  # noqa: E402
 from aftershock.db import DB  # noqa: E402
-from aftershock.explain import explanation_panel, gradcam  # noqa: E402
+from aftershock.explain import gradcam  # noqa: E402
 from aftershock.model import load_checkpoint  # noqa: E402
 from aftershock.sqlai import register_functions  # noqa: E402
 from aftershock import fieldcheck  # noqa: E402
@@ -51,101 +48,6 @@ INK_MUTED, GRID = "#94a0c2", "#1f2a44"  # tuned for the dark theme in .streamlit
 # Known-good disasters to default to (busy + has hotspots) - picked over an alphabetical default
 # (e.g. guatemala-volcano has only 168 buildings / 7 damaged, a flat first impression).
 PREFERRED_DEFAULT_DISASTERS = ["hurricane-harvey", "hurricane-michael", "socal-fire"]
-
-
-def crisp(img: Image.Image, size: int = 480) -> Image.Image:
-    """Upscale a small crop/Grad-CAM panel with Lanczos + a touch of sharpening so it reads clean at display size."""
-    w, h = img.size
-    scale = size / max(w, h)
-    img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
-    return img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2))
-
-
-@st.cache_data(show_spinner=False)
-def context_crop_with_outline(image_id: str, uid: str, pad: float = 3.0, size: int = 560):
-    """DISPLAY ONLY - a wider crop straight from the original xBD tile (not the 128px DB crop the
-    model trains/predicts on), with the building's own polygon outlined in red, so a reviewer sees
-    real surrounding context instead of a tiny image stretched to look bigger than it is.
-    Does not touch model input, the stored DB crops, or any training/predict code path."""
-    labels_path = DATA_DIR / "xbd" / "train" / "labels" / f"{image_id}_post_disaster.json"
-    images_dir = DATA_DIR / "xbd" / "train" / "images"
-    if not labels_path.exists():
-        return None
-    doc = json.loads(labels_path.read_text(encoding="utf-8"))
-    feat = next((f for f in doc.get("features", {}).get("xy", []) if f.get("properties", {}).get("uid") == uid), None)
-    if feat is None:
-        return None
-    poly = shapely_wkt.loads(feat["wkt"])
-    minx, miny, maxx, maxy = poly.bounds
-    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
-    half = max(maxx - minx, maxy - miny, 8) * (1 + pad) / 2
-    pre_path, post_path = images_dir / f"{image_id}_pre_disaster.png", images_dir / f"{image_id}_post_disaster.png"
-    if not (pre_path.exists() and post_path.exists()):
-        return None
-    panels = []
-    for path in (pre_path, post_path):
-        img = Image.open(path).convert("RGB")
-        box = (int(max(cx - half, 0)), int(max(cy - half, 0)), int(min(cx + half, img.width)), int(min(cy + half, img.height)))
-        crop = img.crop(box)
-        scale = size / max(crop.size)
-        crop = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS)
-        # display enhancement only: stretch contrast (1% clip) and sharpen what upscaling softened
-        crop = ImageOps.autocontrast(crop, cutoff=1).filter(ImageFilter.UnsharpMask(radius=2, percent=90, threshold=2))
-        draw = ImageDraw.Draw(crop)
-        pts = [((x - box[0]) * scale, (y - box[1]) * scale) for x, y in poly.exterior.coords]
-        draw.line(pts + [pts[0]], fill=(255, 64, 64), width=4)
-        panels.append(crop)
-    return panels[0], panels[1]
-
-
-@st.cache_data(show_spinner=False)
-def change_view(image_id: str, uid: str, pad: float = 3.0, size: int = 560):
-    """DISPLAY ONLY - what changed between the pre and post tile around one building.
-    Both crops are brightness-normalised (mean/std), the per-pixel difference is smoothed and drawn as a
-    heatmap over the 'after' image. Returns (image, change inside the building, change in its surroundings),
-    both on the same 0-1 scale. Not used by the model."""
-    labels_path = DATA_DIR / "xbd" / "train" / "labels" / f"{image_id}_post_disaster.json"
-    images_dir = DATA_DIR / "xbd" / "train" / "images"
-    if not labels_path.exists():
-        return None
-    doc = json.loads(labels_path.read_text(encoding="utf-8"))
-    feat = next((f for f in doc.get("features", {}).get("xy", []) if f.get("properties", {}).get("uid") == uid), None)
-    pre_path, post_path = images_dir / f"{image_id}_pre_disaster.png", images_dir / f"{image_id}_post_disaster.png"
-    if feat is None or not (pre_path.exists() and post_path.exists()):
-        return None
-    poly = shapely_wkt.loads(feat["wkt"])
-    minx, miny, maxx, maxy = poly.bounds
-    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
-    half = max(maxx - minx, maxy - miny, 8) * (1 + pad) / 2
-    pre_img, post_img = Image.open(pre_path).convert("RGB"), Image.open(post_path).convert("RGB")
-    box = (int(max(cx - half, 0)), int(max(cy - half, 0)), int(min(cx + half, post_img.width)),
-           int(min(cy + half, post_img.height)))
-    a = np.asarray(pre_img.crop(box), dtype=np.float32)
-    b = np.asarray(post_img.crop(box), dtype=np.float32)
-    a = (a - a.mean((0, 1))) / (a.std((0, 1)) + 1e-6)   # removes overall brightness / colour shifts between dates
-    b = (b - b.mean((0, 1))) / (b.std((0, 1)) + 1e-6)
-    diff = np.sqrt(((a - b) ** 2).mean(2))
-    diff = gaussian_filter(diff, sigma=2)               # smooth pixel noise
-    diff = np.clip(diff / 3.0, 0, 1)                    # fixed scale, so buildings are comparable to each other
-    mask_img = Image.new("L", (box[2] - box[0], box[3] - box[1]), 0)
-    ImageDraw.Draw(mask_img).polygon([(x - box[0], y - box[1]) for x, y in poly.exterior.coords], fill=1)
-    mask = np.asarray(mask_img, dtype=bool)
-    inside = float(diff[mask].mean()) if mask.any() else 0.0
-    outside = float(diff[~mask].mean()) if (~mask).any() else 0.0
-    # heatmap: dark blue (no change) -> magenta -> orange -> yellow (strong change), blended over the after image
-    stops = np.array([[11, 18, 36], [126, 34, 206], [244, 63, 94], [251, 146, 60], [250, 204, 21]], dtype=np.float32)
-    pos = diff * (len(stops) - 1)
-    lo = np.floor(pos).astype(int).clip(0, len(stops) - 2)
-    frac = (pos - lo)[..., None]
-    heat = stops[lo] * (1 - frac) + stops[lo + 1] * frac
-    base = np.asarray(ImageOps.autocontrast(post_img.crop(box), cutoff=1), dtype=np.float32) * 0.8
-    alpha = np.clip((diff - 0.15) * 1.6, 0, 0.85)[..., None]   # little change -> the photo shows through
-    out = Image.fromarray((base * (1 - alpha) + heat * alpha).clip(0, 255).astype(np.uint8))
-    scale = size / max(out.size)
-    out = out.resize((round(out.width * scale), round(out.height * scale)), Image.LANCZOS)
-    pts = [((x - box[0]) * scale, (y - box[1]) * scale) for x, y in poly.exterior.coords]
-    ImageDraw.Draw(out).line(pts + [pts[0]], fill=(255, 255, 255), width=3)
-    return out, inside, outside
 
 
 def plotly_theme(fig: go.Figure, title: str) -> go.Figure:
@@ -217,7 +119,12 @@ def live_gradcam(ckpt_path: str, db: DB, uid: str):
     pre_png, post_png = db.crop_bytes(uid)
     pre_t, post_t = png_to_tensor(pre_png, ckpt["img_size"]), png_to_tensor(post_png, ckpt["img_size"])
     cam, cls, probs = gradcam(model, pre_t, post_t)
-    return explanation_panel(pre_t, post_t, cam), DAMAGE_CLASSES[cls], float(probs[cls])
+    return denormalize(pre_t), denormalize(post_t), np.asarray(cam, dtype=np.float32), DAMAGE_CLASSES[cls], float(probs[cls])
+
+
+@st.cache_data(show_spinner=False)
+def evidence(image_id: str, uid: str):
+    return figures.evidence_sheet(DATA_DIR, image_id, uid)
 
 
 st.set_page_config(page_title="AfterShock", page_icon="🛰️", layout="wide")
@@ -809,58 +716,48 @@ with tab_explain:
                 figp.update_yaxes(autorange="reversed")
                 st.plotly_chart(plotly_theme(figp, f"Stored probabilities · {prob_source(version)}"),
                                 width="stretch", config={"displayModeBar": False})
-            image_id_row = df.loc[df["uid"] == uid, "image_id"]
-            context = context_crop_with_outline(image_id_row.iloc[0], uid) if len(image_id_row) else None
-            if context:
-                st.markdown("**Context** (native-resolution tile crop, building outlined in red)")
-                ca, cb = st.columns(2)
-                ca.image(context[0], caption="Before", width="stretch")
-                cb.image(context[1], caption="After", width="stretch")
-                st.caption("xBD imagery is ~0.5–0.8 m/pixel, so a house is only ~25 pixels wide. This wider crop "
-                           "(contrast-stretched for display) is for a human reviewer, not what the model is shown.")
-                cv = change_view(image_id_row.iloc[0], uid)
-                if cv:
-                    cimg, c_in, c_out = cv
-                    ratio = c_in / max(c_out, 1e-6)
-                    verdict_txt = ("clearly more than its surroundings" if ratio >= 1.5 else
-                                   "about the same as its surroundings" if ratio >= 0.8 else "less than its surroundings")
-                    flood = any(k in disaster for k in ("hurricane", "flood", "tsunami"))
-                    cc1, cc2 = st.columns(2)
-                    cc1.image(cimg, caption="What changed (yellow = strong change)", width="stretch")
-                    cc2.markdown(f"**What changed?**\n\nInside the building (white outline): **{c_in:.2f}**  \n"
-                                 f"Surroundings: **{c_out:.2f}**  \n(0 = identical, 1 = completely different)\n\n"
-                                 f"→ the building changed **{verdict_txt}**.")
-                    cc2.caption("Display aid only, not used by the model. Both photos are brightness-normalised first; "
-                                "a small misalignment between the two dates, shadows and season also show up as change."
-                                + (" Flood damage is mostly inside the house, so a roof can look unchanged from above; "
-                                   "such buildings are exactly the ones the model is unsure about." if flood else ""))
-            pre_png, post_png = db.crop_bytes(uid)
-            net_for_cam = version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version
-            try:
-                net_px = json.loads((Path(RUNS_DIR) / net_for_cam / "metrics.json").read_text()).get("img_size", "?")
-            except Exception:
-                net_px = "?"
-            st.markdown(f"**What the model sees** (stored {Image.open(io.BytesIO(pre_png)).width} px crop, "
-                        f"resized to {net_px} px for `{net_for_cam}`)")
-            a, b = st.columns(2)
-            a.image(crisp(Image.open(io.BytesIO(pre_png))), caption="Before", width="stretch")
-            b.image(crisp(Image.open(io.BytesIO(post_png))), caption="After", width="stretch")
-            cam_path = Path(RUNS_DIR) / version / "explanations" / f"{uid}.png"
-            ckpt_path = Path(RUNS_DIR) / (version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version) / "best.pt"
-            if cam_path.exists():
-                st.image(crisp(Image.open(cam_path), size=960), caption="Grad-CAM: before | after | heatmap", width="stretch")
-            elif ckpt_path.exists():
-                with st.spinner("Computing Grad-CAM for this building (not in the precomputed batch)…"):
-                    panel, pred, conf = live_gradcam(str(ckpt_path), db, uid)
-                st.image(crisp(panel, size=960), caption=f"Grad-CAM (live) of network {net_for_cam}: before | after | "
-                                                          f"heatmap — this network alone predicts {pred} ({conf:.0%})",
-                         width="stretch")
-                if net_for_cam != version:
-                    st.caption(f"`{version}` combines several networks, and Grad-CAM needs a single network, so the "
-                               f"heatmap is from `{net_for_cam}` (its best member by validation). Its own prediction can "
-                               f"differ from the combined verdict above.")
-            else:
-                st.caption("No checkpoint available to compute Grad-CAM for this model.")
+
+    if uid:
+        image_id_row = df.loc[df["uid"] == uid, "image_id"]
+        ev = evidence(image_id_row.iloc[0], uid) if len(image_id_row) else None
+        st.markdown("### 📷 Satellite evidence for this building")
+        if ev:
+            fig_img, info = ev
+            st.image(fig_img, width="stretch")
+            ratio = info["change_in"] / max(info["change_out"], 1e-6)
+            verdict_txt = ("clearly more than its surroundings" if ratio >= 1.5 else
+                           "about as much as its surroundings" if ratio >= 0.8 else "less than its surroundings")
+            size_txt = (f"The building is about **{info['building_m']:.0f} m** across, only **{info['building_px']:.0f} "
+                        f"pixels** in the original tile ({info['m_per_px']:.2f} m per pixel, measured from its own "
+                        f"coordinates)." if info["m_per_px"] else "")
+            flood = any(k in disaster for k in ("hurricane", "flood", "tsunami"))
+            st.markdown(f"Inside the red outline the image changed **{verdict_txt}** "
+                        f"(change {info['change_in']:.2f} inside vs {info['change_out']:.2f} around; 0 = identical, "
+                        f"1 = completely different). {size_txt}")
+            st.caption("Display aid only, never used by the model: crops from the original xBD tiles, contrast-stretched; "
+                       "the change map compares brightness-normalised before/after pixels, so small misalignment between "
+                       "the two dates, shadows and season also count as change."
+                       + (" Flood damage is mostly inside a house, so a roof can look unchanged from above; such "
+                          "buildings are exactly the ones the model is unsure about." if flood else ""))
+        else:
+            st.info("The original xBD tile for this building is not on this machine, so only the model's own input "
+                    "crops are shown below.")
+
+        st.markdown("### 🧠 What the network looked at")
+        net_for_cam = version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version
+        ckpt_path = Path(RUNS_DIR) / net_for_cam / "best.pt"
+        if ckpt_path.exists():
+            with st.spinner("Computing Grad-CAM for this building…"):
+                pre_rgb, post_rgb, cam, pred, conf = live_gradcam(str(ckpt_path), db, uid)
+            st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf), width="stretch")
+            st.caption("Grad-CAM (Selvaraju et al., 2017): the gradient of the predicted class with respect to the "
+                       "last convolutional features shows which parts of the input pushed the decision. Red = strong "
+                       "influence, blue = ignored."
+                       + (f" `{version}` combines a network with test-time augmentation and calibration, and Grad-CAM "
+                          f"needs one plain network, so this is `{net_for_cam}`. Its own prediction can differ from the "
+                          f"verdict above." if net_for_cam != version else ""))
+        else:
+            st.caption("No checkpoint on this machine to compute Grad-CAM for this model.")
 
 # ============================================================== TAB: Probabilistic DB queries
 with tab_prob:

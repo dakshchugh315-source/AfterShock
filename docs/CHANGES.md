@@ -92,6 +92,14 @@
     brightness-normalised before/after difference heatmap with a change score inside the building vs its
     surroundings (destroyed test houses ~1.6-3x their surroundings, undamaged ~0.8-1.4x). The caption warns that
     misalignment between dates and shadows also show as change.
+52. **Labelled review figures** (`app/figures.py`, display only). "Satellite evidence": Before | After | What
+    changed, each with a title bar (capture date + satellite from the xBD label metadata), the building outline, a
+    scale bar in metres and a colour legend. "What the network looked at": the network's own 128 px input (before,
+    after) and its Grad-CAM, with an importance legend. Shown full width under the review queue.
+    The metres-per-pixel scale is MEASURED for every building (its polygon is stored in both pixel and lon/lat
+    coordinates): 0.45-0.47 m/pixel on the tiles checked. The old caption's fixed "~0.5-0.8 m/pixel" was dropped,
+    and the metadata's `gsd` (e.g. 3.02) is not the tile's pixel size, so it is not used. Old image helpers and
+    unused imports removed (pyflakes clean).
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
