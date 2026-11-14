@@ -667,6 +667,18 @@ with tab_explain:
             if prow:
                 *probs4, p_idx, p_conf, p_unc = prow
                 col = COLORS[p_idx]
+                # If the model is unsure, don't headline the arg-max class as if it were an answer:
+                # say "Unsure" and show the top-2 classes, which is what sends it to a person.
+                order = sorted(range(4), key=lambda i: probs4[i], reverse=True)
+                unsure = p_unc >= review_threshold
+                if unsure:
+                    col = INK_MUTED
+                    headline = (f'Unsure <span style="font-size:0.95rem; font-weight:500; color:#c9d0ea">· leaning '
+                                f'<b style="color:{COLORS[order[0]]}">{DAMAGE_CLASSES[order[0]]}</b> '
+                                f'{probs4[order[0]]:.0%} vs <b style="color:{COLORS[order[1]]}">{DAMAGE_CLASSES[order[1]]}</b> '
+                                f'{probs4[order[1]]:.0%}</span>')
+                else:
+                    headline = DAMAGE_CLASSES[p_idx]
                 truth_txt = truth.iloc[0] if len(truth) else "–"
                 match = len(truth) and truth_txt == DAMAGE_CLASSES[p_idx]
                 badge = (f'<span class="as-badge" style="background:{GOOD}33; color:{GOOD}">matches xBD label</span>' if match
@@ -676,10 +688,13 @@ with tab_explain:
                          f'<span class="as-badge" style="background:{BLUE}33; color:#8cc4ff">model decides</span>')
                 st.markdown(f"""<div class="as-verdict" style="--c:{col}">
                     <div class="as-verdict-k">Model verdict · <span class="uid-mono">{uid[:13]}…</span></div>
-                    <div class="as-verdict-v">{DAMAGE_CLASSES[p_idx]}</div>
+                    <div class="as-verdict-v">{headline}</div>
                     <div class="as-verdict-row"><div><div class="as-verdict-k">confidence</div><b>{p_conf:.0%}</b></div>
                     <div><div class="as-verdict-k">uncertainty</div><b>{p_unc:.2f}</b></div>
-                    <div style="display:flex; gap:6px; align-items:end;">{badge}{route}</div></div></div>""",
+                    <div style="display:flex; gap:6px; align-items:end;">{badge}{route}</div></div>
+                    {f'<div style="font-size:0.8rem; color:#aab3d6; margin-top:8px;">Uncertainty {p_unc:.2f} is above the '
+                     f'review threshold ({review_threshold:.2f}), so "{DAMAGE_CLASSES[p_idx]}" is only the top guess, not a '
+                     f'decision. The system hands this building to a person.</div>' if unsure else ''}</div>""",
                             unsafe_allow_html=True)
                 figp = go.Figure(go.Bar(x=list(probs4), y=DAMAGE_CLASSES, orientation="h",
                                         marker_color=[COLORS[i] for i in range(4)], text=[f"{p:.0%}" for p in probs4],

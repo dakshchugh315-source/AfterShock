@@ -40,6 +40,8 @@
     hero) so warm colours only ever mean damage. Damage palette brightened for the dark background and kept
     identical in every view (2D map, 3D city, charts, verdict card): no damage #34d399, minor #facc15,
     major #fb923c, destroyed #f43f5e.
+42. Verdict card no longer headlines an unsure arg-max as an answer: above the review threshold it says
+    "Unsure · leaning <top class> X% vs <second class> Y%" in neutral grey, with a one-line reason.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
