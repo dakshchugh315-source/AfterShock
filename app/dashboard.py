@@ -1115,7 +1115,7 @@ with tab_sql:
         st.graphviz_chart(er_diagram(db_url), width="stretch")
         st.caption("Columns are read live from the database (PRAGMA table_info). PK = primary key (yellow), FK = foreign key. "
                    "Edges are the foreign keys of sql/postgres_schema.sql (the PostgreSQL copy enforces all of them); "
-                   "dashed = logical link by model_version. The same schema runs in PostgreSQL 18 on this laptop.")
+                   "dashed = logical link by model_version. The same schema also runs on PostgreSQL 18 (sql/postgres_schema.sql).")
         st.subheader("Schema")
         schema_df = schema_overview(db_url)
         st.dataframe(schema_df, hide_index=True, width="stretch", height=38 + 35 * len(schema_df),
