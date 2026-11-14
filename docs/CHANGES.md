@@ -23,6 +23,13 @@
     background, branded sidebar (sections "Model & area", "Filters"), tabs as a pill bar with shorter
     labels, glass panels for metrics/tables/charts/alerts/code, gradient buttons. Plotly text/grid colours
     tuned for dark.
+38. **Bug fix: review-queue confidence showed 0%/1%.** Confidence is stored as a probability (0-1) but the
+    column format `%.0f%%` printed the raw number, so 0.28 became "0%". It is now converted to a percentage
+    and drawn as a bar. Only the display was wrong; stored values and metrics were always correct.
+39. Grad-CAM tab: queue size + share metrics; a **verdict card** for the selected building (predicted class,
+    confidence, uncertainty, match/mismatch with the xBD label, "human review" vs "model decides") and a bar
+    chart of its four stored probabilities. Header: one-line question + pipeline flow + live COUNT(*) stats
+    (buildings, predictions, pending review_queue rows, hotspots).
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

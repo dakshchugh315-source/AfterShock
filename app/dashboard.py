@@ -283,32 +283,76 @@ iframe {{pointer-events:auto;}}
 [data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ORANGE}) !important; height:3px !important;}}
 [data-testid="stPlotlyChart"], [data-testid="stDeckGlJsonChart"] {{animation:as-fade-up .6s ease both;}}
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{animation:none !important; transition:none !important;}} }}
+.as-eyebrow {{font-size:0.72rem; letter-spacing:.14em; text-transform:uppercase; color:#ffb08a; margin-bottom:4px;}}
+.as-hero .as-sub {{max-width:820px; line-height:1.5;}}
+.as-flow {{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:14px;}}
+.as-step {{font-size:0.8rem; padding:5px 11px; border-radius:9px; background:#ffffff12; border:1px solid #ffffff26; color:#f1f3ff;}}
+.as-arrow {{color:#ff9a6c; font-weight:700;}}
+.as-stats {{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:16px;}}
+.as-stat {{background:#0007; border:1px solid #ffffff1f; border-radius:12px; padding:10px 14px;}}
+.as-stat-v {{font-family:'Space Grotesk', sans-serif; font-size:1.55rem; font-weight:700; color:#fff; line-height:1.1;}}
+.as-stat-l {{font-size:0.75rem; color:#b8c0e0; margin-top:2px;}}
+.as-foot {{margin-top:14px; font-size:0.78rem; color:#aab3d6; display:flex; flex-wrap:wrap; align-items:center; gap:8px;}}
+.as-foot .as-pill {{font-size:0.7rem; padding:2px 8px;}}
+.as-verdict {{border-radius:16px; padding:16px 18px; margin-bottom:12px; border:1px solid var(--c);
+    background:linear-gradient(135deg, color-mix(in srgb, var(--c) 22%, transparent), #0b1224cc);}}
+.as-verdict-k {{font-size:0.7rem; letter-spacing:.12em; text-transform:uppercase; color:#aab3d6;}}
+.as-verdict-v {{font-family:'Space Grotesk', sans-serif; font-size:1.6rem; font-weight:700; color:var(--c);}}
+.as-verdict-row {{display:flex; flex-wrap:wrap; gap:22px; margin-top:6px;}}
+.as-badge {{display:inline-block; font-size:0.75rem; padding:3px 10px; border-radius:999px; font-weight:600;}}
 @media (max-width: 700px) {{ .as-globe-wrap {{display:none;}} .as-hero {{padding:20px;}} }}
 </style>
 """, unsafe_allow_html=True)
-st.markdown("""
+def render_hero(stats=None):
+    """Header banner. `stats` = live COUNT(*)s from the database (None if no DB is configured)."""
+    steps = [("🛰️", "Pre + post imagery"), ("🗄️", "SQL database"), ("🧠", "Siamese CNN"),
+             ("🎲", "Probabilities + uncertainty"), ("🧑‍⚖️", "Human review")]
+    flow = '<span class="as-arrow">→</span>'.join(f'<span class="as-step">{i} {t}</span>' for i, t in steps)
+    stat_html = ""
+    if stats:
+        stat_html = '<div class="as-stats">' + "".join(
+            f'<div class="as-stat"><div class="as-stat-v">{v}</div><div class="as-stat-l">{l}</div></div>'
+            for v, l in stats) + "</div>"
+    st.markdown(f"""
 <div class="as-hero">
   <div class="as-globe-wrap"><div class="as-globe"></div><div class="as-meridian"></div>
     <div class="as-orbit"><div class="as-sat"></div></div></div>
-  <div>
+  <div style="flex:1; min-width:0;">
+    <div class="as-eyebrow"><span class="as-live"></span>Satellite damage intelligence · xBD benchmark</div>
     <h1>AfterShock</h1>
-    <div class="as-sub">Building damage assessment from pre/post-disaster satellite images · AI inside the database</div>
-    <div class="as-pills">
-      <span class="as-pill"><span class="as-live"></span>live database</span>
-      <span class="as-pill">Deep learning on DB data</span><span class="as-pill">Probabilistic DB</span>
-      <span class="as-pill">Data mining (DBSCAN)</span><span class="as-pill">XAI (Grad-CAM)</span>
-    </div>
-    <div class="as-sub" style="font-size:0.8rem; margin-top:10px;">Data Management and AI Integration · Bennett University · Daksh Chugh</div>
+    <div class="as-sub">Which buildings collapsed, how sure is the model, and why? AfterShock compares before and after
+      satellite images building by building, stores every answer as probabilities in SQL, and sends the unsure ones to a person.</div>
+    <div class="as-flow">{flow}</div>
+    {stat_html}
+    <div class="as-foot">Data Management and AI Integration · Bennett University · Daksh Chugh</div>
   </div>
 </div>""", unsafe_allow_html=True)
+
 
 # The database comes only from the environment (scripts/start_demo.ps1 sets it) - never from the UI,
 # and its local path is never displayed.
 db_url = os.environ.get("AFTERSHOCK_DB")
 if not db_url:
+    render_hero()
     st.error("Database not configured. Start the dashboard with `scripts\\start_demo.ps1`.")
     st.stop()
 db = DB(db_url)
+
+
+def _count(sql):
+    try:
+        return db.execute(sql).fetchone()[0]
+    except Exception:  # table not installed on this database (e.g. review_queue before sqlai --install)
+        return None
+
+
+hero_stats = [(f"{n:,}", label) for n, label in [
+    (_count("SELECT COUNT(*) FROM buildings"), "buildings in the DB"),
+    (_count("SELECT COUNT(*) FROM predictions"), "probabilistic predictions"),
+    (_count("SELECT COUNT(*) FROM review_queue WHERE status = 'pending'"), "queued for human review"),
+    (_count("SELECT COUNT(*) FROM hotspots"), "damage hotspots mined"),
+] if n is not None]
+render_hero(hero_stats)
 
 # ---------------------------------------------------------------- architecture comparison
 # Only the controlled trio (same loss/epochs/data, architecture is the one thing that differs) -
@@ -603,24 +647,60 @@ with tab_map:
 
 # ============================================================== TAB: Explainability
 with tab_explain:
-    left, right = st.columns([2, 3])
+    left, right = st.columns([5, 6])
     with left:
         st.subheader("🧑‍⚖️ Human review queue")
         queue = df[df["uncertainty"] >= review_threshold].sort_values("uncertainty", ascending=False).copy()
         queue["uid_short"] = queue["uid"].str.slice(0, 8) + "…"
+        # confidence is stored as a probability (0-1); show it as a percentage bar.
+        queue["conf_pct"] = queue["confidence"] * 100
+        qa, qb = st.columns(2)
+        qa.metric("Queued for review", f"{len(queue):,}", help=f"Buildings with MC-Dropout uncertainty ≥ {review_threshold:.2f} "
+                  "(sidebar). The database trigger uses its own fixed rule: uncertainty ≥ 0.5 or confidence < 0.6.")
+        qb.metric("Share of this disaster", f"{len(queue) / max(len(df), 1):.0%}")
         st.dataframe(
-            queue[["uid_short", "predicted", "confidence", "uncertainty"]].rename(columns={"uid_short": "uid"}),
-            hide_index=True, width="stretch", height=260,
+            queue[["uid_short", "predicted", "conf_pct", "uncertainty"]].rename(columns={"uid_short": "uid"}),
+            hide_index=True, width="stretch", height=280,
             column_config={
-                "confidence": st.column_config.NumberColumn(format="%.0f%%", width="small"),
-                "uncertainty": st.column_config.NumberColumn(format="%.2f", width="small"),
+                "uid": st.column_config.TextColumn("building", width="small"),
+                "predicted": st.column_config.TextColumn("model says"),
+                "conf_pct": st.column_config.ProgressColumn("confidence", min_value=0, max_value=100, format="%.0f%%"),
+                "uncertainty": st.column_config.NumberColumn("uncert.", format="%.2f", width="small"),
             })
-        st.caption("Full IDs are truncated for display - select a building below to see its full id and explanation.")
+        st.caption("Most uncertain first. Confidence = the model's top probability; uncertainty = normalised entropy of the "
+                   "mean of 20 MC-Dropout passes (0 = sure, 1 = no idea). Pick a building below to inspect it.")
         pick_from = queue["uid"].tolist() + df.sort_values("confidence")["uid"].tolist()[:50]
         uid = st.selectbox("Building (uncertain ones first)", pick_from, format_func=lambda u: u[:8] + "…")
     with right:
         if uid:
-            st.markdown(f'<span class="uid-mono">{uid}</span>', unsafe_allow_html=True)
+            # Verdict card: the stored probabilistic row for this building, next to the xBD ground truth.
+            prow = db.execute("SELECT p_no, p_minor, p_major, p_destroyed, pred_idx, confidence, uncertainty "
+                              "FROM predictions WHERE uid = ? AND model_version = ?", (uid, version)).fetchone()
+            truth = df.loc[df["uid"] == uid, "true_label"]
+            if prow:
+                *probs4, p_idx, p_conf, p_unc = prow
+                col = COLORS[p_idx]
+                truth_txt = truth.iloc[0] if len(truth) else "–"
+                match = len(truth) and truth_txt == DAMAGE_CLASSES[p_idx]
+                badge = (f'<span class="as-badge" style="background:{GOOD}33; color:{GOOD}">matches xBD label</span>' if match
+                         else f'<span class="as-badge" style="background:{CRITICAL}33; color:#ff8a8a">xBD label: {truth_txt}</span>')
+                route = (f'<span class="as-badge" style="background:{ORANGE}33; color:#ffb08a">→ human review</span>'
+                         if p_unc >= review_threshold else
+                         f'<span class="as-badge" style="background:{BLUE}33; color:#8cc4ff">model decides</span>')
+                st.markdown(f"""<div class="as-verdict" style="--c:{col}">
+                    <div class="as-verdict-k">Model verdict · <span class="uid-mono">{uid[:13]}…</span></div>
+                    <div class="as-verdict-v">{DAMAGE_CLASSES[p_idx]}</div>
+                    <div class="as-verdict-row"><div><div class="as-verdict-k">confidence</div><b>{p_conf:.0%}</b></div>
+                    <div><div class="as-verdict-k">uncertainty</div><b>{p_unc:.2f}</b></div>
+                    <div style="display:flex; gap:6px; align-items:end;">{badge}{route}</div></div></div>""",
+                            unsafe_allow_html=True)
+                figp = go.Figure(go.Bar(x=list(probs4), y=DAMAGE_CLASSES, orientation="h",
+                                        marker_color=[COLORS[i] for i in range(4)], text=[f"{p:.0%}" for p in probs4],
+                                        textposition="outside", hovertemplate="%{y}: %{x:.1%}<extra></extra>"))
+                figp.update_layout(height=200, xaxis_range=[0, 1.12], xaxis_tickformat=".0%", showlegend=False)
+                figp.update_yaxes(autorange="reversed")
+                st.plotly_chart(plotly_theme(figp, "Stored probabilities (mean of 20 MC-Dropout passes)"),
+                                width="stretch", config={"displayModeBar": False})
             image_id_row = df.loc[df["uid"] == uid, "image_id"]
             context = context_crop_with_outline(image_id_row.iloc[0], uid) if len(image_id_row) else None
             if context:
