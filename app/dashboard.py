@@ -39,9 +39,11 @@ def pretty(run: str) -> str:
     return SHORT_NAMES.get(base, base) + (" 192px" if run.endswith("_192") else "")
 
 # Validated categorical palette (dataviz skill, references/palette.md) - fixed hue order, never cycled.
-BLUE, ORANGE, AQUA, VIOLET = "#2a78d6", "#eb6834", "#1baf7a", "#6250d6"
+BLUE, ORANGE, AQUA, VIOLET = "#60a5fa", "#f59e0b", "#2dd4bf", "#a78bfa"  # brightened for the dark theme
+# UI accents are cool (cyan/indigo) so warm colours always mean damage.
+ACCENT, ACCENT2 = "#22d3ee", "#818cf8"
 # Status palette (severity, not identity): good -> critical.
-GOOD, WARNING, SERIOUS, CRITICAL = "#0ca30c", "#fab219", "#ec835a", "#d03b3b"
+GOOD, WARNING, SERIOUS, CRITICAL = "#34d399", "#facc15", "#fb923c", "#f43f5e"
 COLORS = {0: GOOD, 1: WARNING, 2: SERIOUS, 3: CRITICAL}
 INK_MUTED, GRID = "#94a0c2", "#1f2a44"  # tuned for the dark theme in .streamlit/config.toml
 # Known-good disasters to default to (busy + has hotspots) - picked over an alphabetical default
@@ -173,8 +175,8 @@ h2, h3, h4 {{font-weight: 700 !important;}}
 /* ---------- Mission-control theme (colours in .streamlit/config.toml) ---------- */
 .stApp {{
     background:
-        radial-gradient(1200px 600px at 85% -10%, #2a1f5c55, transparent 60%),
-        radial-gradient(900px 500px at -10% 30%, #0d3b4f55, transparent 60%),
+        radial-gradient(1200px 600px at 85% -10%, #312e8155, transparent 60%),
+        radial-gradient(900px 500px at -10% 30%, #08334477, transparent 60%),
         linear-gradient(#ffffff05 1px, transparent 1px) 0 0 / 100% 42px,
         linear-gradient(90deg, #ffffff05 1px, transparent 1px) 0 0 / 42px 100%,
         #070b18;
@@ -186,7 +188,7 @@ section[data-testid="stSidebar"] {{
 }}
 .as-brand {{display:flex; align-items:center; gap:10px; padding:4px 0 14px; margin-bottom:10px; border-bottom:1px solid #1f2a44;}}
 .as-brand-logo {{width:38px; height:38px; border-radius:11px; display:grid; place-items:center; font-size:20px;
-    background:linear-gradient(135deg, {ORANGE}, {VIOLET}); box-shadow:0 8px 20px -8px {ORANGE};}}
+    background:linear-gradient(135deg, {ACCENT}, {VIOLET}); box-shadow:0 8px 20px -8px {ACCENT};}}
 .as-brand-name {{font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:1.1rem; color:#fff; line-height:1.1;}}
 .as-brand-sub {{font-size:0.72rem; color:#8f9bbd; letter-spacing:.08em; text-transform:uppercase;}}
 .as-side-label {{font-size:0.7rem; letter-spacing:.12em; text-transform:uppercase; color:#8f9bbd; margin:14px 0 2px;}}
@@ -199,8 +201,8 @@ h3 {{color:#ffffff !important;}}
     backdrop-filter:blur(8px);}}
 [role="tablist"] {{border-bottom:0 !important;}}
 [data-testid="stTab"], button[data-baseweb="tab"] {{border-radius:10px !important; padding:7px 9px !important; margin:0 !important; height:auto !important; border-bottom:0 !important;}}
-[data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {{background:linear-gradient(135deg, {ORANGE}33, {VIOLET}33) !important;
-    box-shadow:inset 0 0 0 1px {ORANGE}66;}}
+[data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {{background:linear-gradient(135deg, {ACCENT}33, {VIOLET}33) !important;
+    box-shadow:inset 0 0 0 1px {ACCENT}66;}}
 [data-testid="stTab"] p, button[data-baseweb="tab"] p {{font-weight:600 !important; font-size:0.86rem !important; white-space:nowrap;}}
 [data-testid="stTab"][aria-selected="true"] p {{color:#ffffff !important;}}
 [data-baseweb="tab-border"] {{display:none;}}
@@ -216,10 +218,10 @@ h3 {{color:#ffffff !important;}}
 [data-testid="stPlotlyChart"] {{padding:6px;}}
 [data-testid="stMetricValue"] {{background:linear-gradient(90deg, #ffffff, #b9c4ff); -webkit-background-clip:text;
     background-clip:text; color:transparent !important;}}
-[data-testid="stAlert"] {{border-left:3px solid {ORANGE} !important;}}
-.stButton > button {{background:linear-gradient(135deg, {ORANGE}, #e8505b) !important; color:#fff !important;
-    border:0 !important; font-weight:600; box-shadow:0 8px 20px -10px {ORANGE}; transition:transform .2s, box-shadow .2s;}}
-.stButton > button:hover {{transform:translateY(-2px); box-shadow:0 12px 26px -10px {ORANGE};}}
+[data-testid="stAlert"] {{border-left:3px solid {ACCENT} !important;}}
+.stButton > button {{background:linear-gradient(135deg, {ACCENT}, {ACCENT2}) !important; color:#06111f !important;
+    border:0 !important; font-weight:600; box-shadow:0 8px 20px -10px {ACCENT}; transition:transform .2s, box-shadow .2s;}}
+.stButton > button:hover {{transform:translateY(-2px); box-shadow:0 12px 26px -10px {ACCENT};}}
 ::-webkit-scrollbar {{width:10px; height:10px;}}
 ::-webkit-scrollbar-thumb {{background:#24304d; border-radius:10px;}}
 ::-webkit-scrollbar-track {{background:transparent;}}
@@ -245,7 +247,7 @@ iframe {{pointer-events:auto;}}
 @keyframes as-scan {{from {{transform:translateX(-100%);}} to {{transform:translateX(400%);}}}}
 
 .as-hero {{position:relative; overflow:hidden; border-radius:22px; padding:26px 30px; margin-bottom:6px;
-    background:linear-gradient(120deg, #0f1b3d, #2a1f5c, #0d3b4f, #0f1b3d); background-size:300% 300%;
+    background:linear-gradient(120deg, #0b1736, #1e1b4b, #083344, #0b1736); background-size:300% 300%;
     animation:as-shift 18s ease infinite; color:#eef1ff; display:flex; align-items:center; gap:28px;
     border:1px solid #ffffff22; box-shadow:0 20px 50px -20px #0b1230cc;}}
 .as-hero::after {{content:""; position:absolute; top:0; left:0; width:25%; height:100%; pointer-events:none;
@@ -267,7 +269,7 @@ iframe {{pointer-events:auto;}}
 .as-orbit {{position:absolute; inset:-4px; border-radius:50%; border:1.5px dashed #ffffff55; transform-style:preserve-3d;
     animation:as-orbit 7s linear infinite;}}
 .as-sat {{position:absolute; top:-6px; left:50%; width:12px; height:12px; margin-left:-6px; border-radius:3px;
-    background:{ORANGE}; box-shadow:0 0 12px {ORANGE};}}
+    background:{ACCENT}; box-shadow:0 0 12px {ACCENT};}}
 
 /* Glass tiles that tilt in 3D on hover */
 .as-tile {{backdrop-filter:blur(6px); transition:transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s;
@@ -281,14 +283,14 @@ iframe {{pointer-events:auto;}}
 [role="tabpanel"], [data-baseweb="tab-panel"] {{animation:as-fade-up .45s ease both;}}
 [data-testid="stTab"], button[data-baseweb="tab"] {{transition:color .2s, transform .2s, background .2s;}}
 [data-testid="stTab"]:hover, button[data-baseweb="tab"]:hover {{transform:translateY(-2px);}}
-[data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ORANGE}) !important; height:3px !important;}}
+[data-baseweb="tab-highlight"] {{background:linear-gradient(90deg, {BLUE}, {VIOLET}, {ACCENT}) !important; height:3px !important;}}
 [data-testid="stPlotlyChart"], [data-testid="stDeckGlJsonChart"] {{animation:as-fade-up .6s ease both;}}
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{animation:none !important; transition:none !important;}} }}
-.as-eyebrow {{font-size:0.72rem; letter-spacing:.14em; text-transform:uppercase; color:#ffb08a; margin-bottom:4px;}}
+.as-eyebrow {{font-size:0.72rem; letter-spacing:.14em; text-transform:uppercase; color:#67e8f9; margin-bottom:4px;}}
 .as-hero .as-sub {{max-width:820px; line-height:1.5;}}
 .as-flow {{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:14px;}}
 .as-step {{font-size:0.8rem; padding:5px 11px; border-radius:9px; background:#ffffff12; border:1px solid #ffffff26; color:#f1f3ff;}}
-.as-arrow {{color:#ff9a6c; font-weight:700;}}
+.as-arrow {{color:{ACCENT}; font-weight:700;}}
 .as-stats {{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:16px;}}
 .as-stat {{background:#0007; border:1px solid #ffffff1f; border-radius:12px; padding:10px 14px;}}
 .as-stat-v {{font-family:'Space Grotesk', sans-serif; font-size:1.55rem; font-weight:700; color:#fff; line-height:1.1;}}

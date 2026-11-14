@@ -36,6 +36,10 @@
     destroyed buildings pulse red and DBSCAN hotspots are violet rings. HUD: legend, live counts and
     buttons (orbit, replay, top view, tilt). `prefers-reduced-motion` disables the animation. The map tab is
     now full width. Data drawn = the same `predictions` rows; nothing about the model changes.
+41. **Colour scheme**: UI accents are now cool (cyan #22d3ee / indigo #818cf8: tabs, sliders, buttons, links,
+    hero) so warm colours only ever mean damage. Damage palette brightened for the dark background and kept
+    identical in every view (2D map, 3D city, charts, verdict card): no damage #34d399, minor #facc15,
+    major #fb923c, destroyed #f43f5e.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

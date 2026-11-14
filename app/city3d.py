@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 from shapely import wkt as shapely_wkt
 
 NAMES = ["no damage", "minor damage", "major damage", "destroyed"]
-RGB = [[12, 163, 12], [250, 178, 25], [255, 122, 69], [235, 59, 59]]
+RGB = [[52, 211, 153], [250, 204, 21], [251, 146, 60], [244, 63, 94]]  # same as dashboard COLORS
 
 _HTML = r"""
 <div id="wrap">
@@ -46,7 +46,7 @@ _HTML = r"""
   .ctrl {left:12px; bottom:12px; display:flex; gap:6px; padding:6px;}
   .ctrl button {background:#ffffff14; color:#fff; border:1px solid #ffffff2a; border-radius:8px;
                 padding:6px 10px; font-size:12px; cursor:pointer;}
-  .ctrl button:hover {background:#ff7a4533; border-color:#ff7a45;}
+  .ctrl button:hover {background:#22d3ee33; border-color:#22d3ee;}
   .hint {right:12px; bottom:12px; font-size:11px; color:#9aa6c8;}
   @media (max-width:640px) {.stats, .hint {display:none;}}
 </style>
@@ -81,7 +81,7 @@ function layers(now) {
     new deck.ScatterplotLayer({
       id: 'beacons', data: DESTROYED, getPosition: d => [d.lon, d.lat],
       radiusUnits: 'meters', getRadius: 9, radiusScale: 1 + 1.4 * pulse,
-      filled: true, getFillColor: [255, 70, 70, Math.round(90 * (1 - pulse) + 20)]
+      filled: true, getFillColor: [244, 63, 94, Math.round(90 * (1 - pulse) + 20)]
     }),
     new deck.PolygonLayer({
       id: 'buildings', data: DATA, getPolygon: d => d.p,
