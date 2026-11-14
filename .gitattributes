@@ -1,0 +1,4 @@
+*.sh text eol=lf
+hf/Dockerfile text eol=lf
+*.jpg binary
+*.png binary

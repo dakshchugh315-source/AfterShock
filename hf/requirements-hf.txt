@@ -1,0 +1,12 @@
+# Installed on top of CPU-only torch==2.9.1 / torchvision==0.24.1 (see hf/Dockerfile)
+streamlit==1.66.1
+numpy
+pandas
+plotly
+folium
+streamlit-folium
+shapely>=2.0
+scipy
+scikit-learn
+pillow
+huggingface_hub>=0.25

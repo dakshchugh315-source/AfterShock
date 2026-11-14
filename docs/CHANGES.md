@@ -100,6 +100,18 @@
     coordinates): 0.45-0.47 m/pixel on the tiles checked. The old caption's fixed "~0.5-0.8 m/pixel" was dropped,
     and the metadata's `gsd` (e.g. 3.02) is not the tile's pixel size, so it is not used. Old image helpers and
     unused imports removed (pyflakes clean).
+53. **Page redesigns after a second audit.** Overview: final-model card (every number from its metrics.json),
+    a "where each course topic lives" card row, then the architecture experiment (duplicate header tiles removed).
+    Quality: KPI cards, confusion matrix with counts and row %, per-class bars, the selective-prediction curve
+    computed from stored uncertainty, and a per-class table. Probabilistic DB: expected vs hard counts
+    (SUM(p_destroyed)) with the SQL, a default spatial query that is never empty, a tighter 3D chart.
+    Database & SQL: an entity-relationship diagram drawn from the live schema (PRAGMA table_info) with the foreign
+    keys of the PostgreSQL schema. Map: duplicate legend under the 3D view removed. Header globe: real Earth
+    (NASA Blue Marble, public domain, app/assets/) rotating behind a shaded sphere.
+54. **Free hosting of the FULL app on Hugging Face Spaces** (`hf/`, `scripts/prepare_hf.py`): Docker image with
+    CPU PyTorch; code in the Space, the 1.9 GB data bundle (database, checkpoints, results, the 100 test tiles) in
+    a dataset repo, downloaded on start. PyTorch is now an optional import (AFTERSHOCK_LITE=1 or no torch: the app
+    still runs, Grad-CAM/ai_predict show a note). Figures fall back to DejaVu fonts on Linux.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

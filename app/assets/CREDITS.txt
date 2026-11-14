@@ -1,0 +1,2 @@
+earth_blue_marble.jpg: NASA Blue Marble (public domain, NASA Visible Earth),
+obtained via the three-globe npm package (example/img/earth-blue-marble.jpg), resized to 1024x512.

@@ -23,7 +23,10 @@ JET_STOPS = np.array([[0, 0, 140], [0, 120, 255], [0, 230, 200], [250, 230, 0], 
 
 
 def _font(size, bold=False):
-    for name in (("segoeuib.ttf", "arialbd.ttf") if bold else ("segoeui.ttf", "arial.ttf")):
+    # Windows fonts first, then DejaVu (installed in the Hugging Face Docker image)
+    names = (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+             if bold else ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+    for name in names:
         try:
             return ImageFont.truetype(name, size)
         except OSError:

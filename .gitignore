@@ -16,3 +16,6 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Hugging Face upload staging (scripts/prepare_hf.py)
+build/

@@ -2,6 +2,7 @@
 
 streamlit run app/dashboard.py
 """
+import base64
 import json
 import os
 import sqlite3
@@ -23,10 +24,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from city3d import render_city3d, render_compare3d  # noqa: E402
 import figures  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
-from aftershock.data import denormalize, png_to_tensor  # noqa: E402
 from aftershock.db import DB  # noqa: E402
-from aftershock.explain import gradcam  # noqa: E402
-from aftershock.model import load_checkpoint  # noqa: E402
+try:  # PyTorch is optional: the hosted "lite" demo runs without it (no live Grad-CAM / ai_predict there)
+    from aftershock.data import denormalize, png_to_tensor  # noqa: E402
+    from aftershock.explain import gradcam  # noqa: E402
+    from aftershock.model import load_checkpoint  # noqa: E402
+    HAS_TORCH = os.getenv("AFTERSHOCK_LITE") != "1"
+except ImportError:
+    HAS_TORCH = False
+LITE_NOTE = ("This hosted demo runs without PyTorch and without the image bytes, to fit a small free server; "
+             "live Grad-CAM and ai_predict() run in the full local version.")
 from aftershock.sqlai import register_functions  # noqa: E402
 from aftershock import fieldcheck  # noqa: E402
 
@@ -128,6 +135,9 @@ def evidence(image_id: str, uid: str):
 
 
 st.set_page_config(page_title="AfterShock", page_icon="🛰️", layout="wide")
+_EARTH = Path(__file__).resolve().parent / "assets" / "earth_blue_marble.jpg"
+EARTH_URI = ("data:image/jpeg;base64," + base64.b64encode(_EARTH.read_bytes()).decode()) if _EARTH.exists() else ""
+
 st.markdown(f"""
 <style>
 .block-container {{padding-top: 1.6rem; max-width: 1500px;}}
@@ -222,11 +232,18 @@ iframe {{pointer-events:auto;}}
 
 /* 3D globe: a shaded sphere, a spinning meridian and a satellite on a tilted orbit */
 .as-globe-wrap {{flex:0 0 auto; width:120px; height:120px; perspective:600px; position:relative;}}
-.as-globe {{position:absolute; inset:10px; border-radius:50%;
-    background:radial-gradient(circle at 32% 30%, #7fd1ff, #2a78d6 45%, #0b2a5c 75%, #040c22);
-    box-shadow:inset -14px -10px 30px #00000088, 0 0 35px #2a78d666;}}
-.as-meridian {{position:absolute; inset:10px; border-radius:50%; border:2px solid #ffffff40; transform-style:preserve-3d;
-    animation:as-spin 6s linear infinite;}}
+.as-globe-wrap .as-orbit {{inset:-14px;}}
+@keyframes as-earth {{from {{background-position:0 0;}} to {{background-position:-240px 0;}}}}
+/* Real Earth (NASA Blue Marble): the map slides behind a round window, so the globe appears to spin */
+.as-globe {{position:absolute; inset:0; border-radius:50%;
+    background:#0b2a5c url("{EARTH_URI}") repeat-x; background-size:240px 120px;
+    animation:as-earth 30s linear infinite;
+    box-shadow:0 0 28px #4fc3f7aa, 0 0 70px #2a78d655;}}
+/* sunlight from the upper left, night side lower right, thin atmosphere rim */
+.as-meridian {{position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle at 30% 28%, #ffffff40 0%, #ffffff00 38%),
+               radial-gradient(circle at 72% 75%, #000000b0 0%, #00000000 62%);
+    box-shadow:inset -18px -14px 34px #000000c0, inset 3px 3px 10px #9be7ff55, inset 0 0 2px 2px #7fd4ff55;}}
 .as-orbit {{position:absolute; inset:-4px; border-radius:50%; border:1.5px dashed #ffffff55; transform-style:preserve-3d;
     animation:as-orbit 7s linear infinite;}}
 .as-sat {{position:absolute; top:-6px; left:50%; width:12px; height:12px; margin-left:-6px; border-radius:3px;
@@ -266,6 +283,24 @@ iframe {{pointer-events:auto;}}
 .as-verdict-v {{font-family:'Space Grotesk', sans-serif; font-size:1.6rem; font-weight:700; color:var(--c);}}
 .as-verdict-row {{display:flex; flex-wrap:wrap; gap:22px; margin-top:6px;}}
 .as-badge {{display:inline-block; font-size:0.75rem; padding:3px 10px; border-radius:999px; font-weight:600;}}
+.as-fm {{border-radius:18px; padding:18px 20px; margin:6px 0 18px; border:1px solid {ACCENT}55;
+    background:linear-gradient(135deg, {ACCENT}1a, {ACCENT2}12 60%, #0b1224cc);}}
+.as-fm-k {{font-size:0.72rem; letter-spacing:.12em; text-transform:uppercase; color:#67e8f9;}}
+.as-fm-name {{font-family:'Space Grotesk', sans-serif; font-size:1.7rem; font-weight:700; color:#fff; margin-top:2px;}}
+.as-fm-arch {{font-size:0.85rem; color:#aab3d6; margin-top:2px;}}
+.as-fm-grid {{display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-top:14px;}}
+.as-fm-stat {{background:#0007; border:1px solid #ffffff1a; border-radius:12px; padding:10px 14px;}}
+.as-fm-v {{font-family:'Space Grotesk', sans-serif; font-size:1.5rem; font-weight:700; color:#fff;}}
+.as-fm-l {{font-size:0.8rem; color:#e7ebf5;}} .as-fm-s {{font-size:0.72rem; color:#8f9bbd; margin-top:2px;}}
+.as-topics {{display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:10px; margin:4px 0 18px;}}
+@media (max-width: 1100px) {{ .as-topics {{grid-template-columns:repeat(2, minmax(0, 1fr));}} }}
+.as-topic {{background:linear-gradient(160deg, #131d34cc, #0b1224cc); border:1px solid #1f2a44; border-radius:14px;
+    padding:12px 14px; transition:transform .25s, border-color .25s;}}
+.as-topic:hover {{transform:translateY(-3px); border-color:{ACCENT}88;}}
+.as-topic-i {{font-size:1.3rem;}} .as-topic-t {{font-weight:700; color:#fff; margin-top:4px;}}
+.as-topic-k {{font-size:0.7rem; letter-spacing:.1em; text-transform:uppercase; color:#67e8f9; margin-top:2px;}}
+.as-topic-d {{font-size:0.8rem; color:#aab3d6; margin-top:6px; line-height:1.4;}}
+.as-topic-tab {{font-size:0.75rem; color:{ACCENT2}; margin-top:8px; font-weight:600;}}
 @media (max-width: 700px) {{ .as-globe-wrap {{display:none;}} .as-hero {{padding:20px;}} }}
 </style>
 """, unsafe_allow_html=True)
@@ -366,17 +401,17 @@ tab_overview, tab_map, tab_explain, tab_prob, tab_sql, tab_real, tab_quality = s
 
 # ============================================================== TAB: Overview & honesty
 with tab_overview:
+    ov_top = st.container()  # final model card, course-topic map and disaster summary (filled further down)
+    st.markdown("### 🧪 Architecture experiment")
+    st.caption("Same data, loss and epochs for all three networks; only the architecture differs. The winner is picked "
+               "on the validation set, then scored once on the test set.")
     if not group_df.empty:
         # Correctness fix: the model that goes forward must be chosen on VALIDATION macro-F1,
         # never on the test score - picking by test score is the model leaking into its own
         # selection criterion. (It happens to be the same winner here, but the method matters.)
         best_row, worst_row, point_diff, rel_lift = lift(group_df)
-        n_disasters = len({r[0] for r in db.execute("SELECT DISTINCT disaster FROM buildings").fetchall()})
-        total_buildings = db.execute("SELECT COUNT(*) FROM buildings").fetchone()[0]
-        hc = st.columns(4)
+        hc = st.columns(2)
         for col, html in zip(hc, [
-            hero_tile(f"{total_buildings:,}", "buildings", BLUE),
-            hero_tile(str(n_disasters), "disasters", ORANGE),
             hero_tile(pretty(best_row), f"best architecture in this experiment, by validation ({best_row})", AQUA),
             hero_tile(f"+{point_diff:.1f} pts", f"test macro-F1 vs {pretty(worst_row)} ({rel_lift:+.1f}% rel.)", VIOLET),
         ]):
@@ -517,8 +552,57 @@ df = pd.DataFrame(db.execute(
 df["predicted"] = df["pred_idx"].map(lambda i: DAMAGE_CLASSES[i])
 df_test = df[df["split"] == "test"]  # the only split that's honest to score agreement on
 
-with tab_overview:
-    st.markdown(f"#### {disaster.replace('-', ' ').title()} · model `{version}`")
+def _final_card(v):
+    """HTML card for the final model, every number read from runs/<v>/metrics.json."""
+    try:
+        m = json.loads((Path(RUNS_DIR) / v / "metrics.json").read_text())
+    except Exception:
+        return ""
+    t = m.get("test", {})
+    if not t:
+        return ""
+    lo, hi = bootstrap_macro_f1_ci(t["confusion_matrix"])
+    d = t["per_class"]["destroyed"]
+    n_test = sum(c["support"] for c in t["per_class"].values())
+    stats = [(f"{m.get('best_val_macro_f1', 0):.3f}", "validation macro-F1", "how it was chosen"),
+             (f"{t['macro_f1']:.3f}", "test macro-F1", f"95% CI {lo:.3f}–{hi:.3f}"),
+             (f"{t['accuracy']:.1%}", "test accuracy", f"{n_test:,} unseen buildings"),
+             (f"{d['recall']:.1%}", "destroyed found (recall)", f"precision {d['precision']:.1%}")]
+    cells = "".join(f'<div class="as-fm-stat"><div class="as-fm-v">{a}</div><div class="as-fm-l">{b}</div>'
+                    f'<div class="as-fm-s">{c}</div></div>' for a, b, c in stats)
+    rank = sorted(val_scores, key=val_scores.get, reverse=True)
+    return (f'<div class="as-fm"><div class="as-fm-k">Final model · chosen by validation macro-F1 among '
+            f'{len(rank)} models with stored predictions</div>'
+            f'<div class="as-fm-name">{v}</div><div class="as-fm-arch">{m.get("arch", "")} · {m.get("img_size", "?")} px input '
+            f'· probabilities: {prob_source(v)}</div><div class="as-fm-grid">{cells}</div></div>')
+
+
+def _topic_cards():
+    pending = _count_p("SELECT COUNT(*) FROM review_queue WHERE status = 'pending' AND model_version = ?", (final_version,))
+    n_hot = _count_p("SELECT COUNT(*) FROM hotspots WHERE model_version = ?", (final_version,))
+    n_tables = _count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    n_field = _count("SELECT COUNT(*) FROM field_matches")
+    cards = [("🧠", "Deep learning on DB data", "Topic 4 · core", "Siamese CNN reads image pairs straight from the "
+              "database and writes probabilities back.", "Grad-CAM · Quality"),
+             ("🎲", "Probabilistic database", "Topic 1", f"4 probabilities + uncertainty per building; a trigger queued "
+              f"{(pending or 0):,} unsure ones for people.", "Probabilistic DB"),
+             ("📍", "Data mining (KDD)", "Topic 3", f"DBSCAN found {(n_hot or 0):,} damage hotspots from coordinates "
+              f"selected with SQL.", "Map & hotspots"),
+             ("🔍", "Explainable AI", "Topic 5", "Grad-CAM heatmaps and labelled before/after/change evidence for any "
+              "building.", "Grad-CAM"),
+             ("🗄️", "Database design", "Core of the course", f"{(n_tables or 0)} tables, keys, CHECKs, indexes, views, "
+              f"triggers; {(n_field or 0):,} buildings checked against field inspectors.", "Database & SQL · Real-world")]
+    return '<div class="as-topics">' + "".join(
+        f'<div class="as-topic"><div class="as-topic-i">{i}</div><div class="as-topic-t">{t}</div>'
+        f'<div class="as-topic-k">{k}</div><div class="as-topic-d">{d}</div><div class="as-topic-tab">→ {tab}</div></div>'
+        for i, t, k, d, tab in cards) + "</div>"
+
+
+with ov_top:
+    st.markdown(_final_card(final_version), unsafe_allow_html=True)
+    st.markdown("### 🧭 Where each course topic lives in this app")
+    st.markdown(_topic_cards(), unsafe_allow_html=True)
+    st.markdown(f"### 📍 {disaster.replace('-', ' ').title()} at a glance · model `{version}`")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Test buildings scored", f"{len(df):,}")
     c2.metric("Predicted major / destroyed", f"{int(df['pred_idx'].isin([2, 3]).sum()):,}")
@@ -609,7 +693,8 @@ with tab_map:
             st.caption("Click the map before scrolling/zooming it - the page keeps scrolling normally otherwise.")
         else:
             st.info("No buildings pass the confidence filter for this disaster.")
-        st.markdown(f"""
+        if not view_mode.startswith("🏙️"):  # the 3D view draws its own legend
+            st.markdown(f"""
         <span class="legend-chip"><span class="legend-dot" style="background:{GOOD}"></span>no damage</span>
         <span class="legend-chip"><span class="legend-dot" style="background:{WARNING}"></span>minor</span>
         <span class="legend-chip"><span class="legend-dot" style="background:{SERIOUS}"></span>major</span>
@@ -746,7 +831,9 @@ with tab_explain:
         st.markdown("### 🧠 What the network looked at")
         net_for_cam = version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version
         ckpt_path = Path(RUNS_DIR) / net_for_cam / "best.pt"
-        if ckpt_path.exists():
+        if not HAS_TORCH:
+            st.info(LITE_NOTE)
+        elif ckpt_path.exists():
             with st.spinner("Computing Grad-CAM for this building…"):
                 pre_rgb, post_rgb, cam, pred, conf = live_gradcam(str(ckpt_path), db, uid)
             st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf), width="stretch")
@@ -761,6 +848,25 @@ with tab_explain:
 
 # ============================================================== TAB: Probabilistic DB queries
 with tab_prob:
+    st.subheader("🎲 Counting with probabilities")
+    exp_row = db.execute(
+        "SELECT COUNT(*), SUM(p.pred_idx = 3), SUM(p.p_destroyed), SUM(b.label_idx = 3), SUM(p.p_major + p.p_destroyed), "
+        "SUM(p.pred_idx >= 2) FROM predictions p JOIN buildings b ON b.uid = p.uid "
+        "WHERE p.model_version = ? AND b.disaster = ? AND b.split = 'test'", (version, disaster)).fetchone()
+    if exp_row and exp_row[0]:
+        n_, hard_d, exp_d, true_d, exp_s, hard_s = exp_row
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Hard count: destroyed", f"{int(hard_d):,}", help="buildings whose top class is 'destroyed'")
+        e2.metric("Expected: destroyed", f"{exp_d:,.1f}", help="SUM(p_destroyed): every building adds its probability")
+        e3.metric("xBD label: destroyed", f"{int(true_d):,}", help="what the annotators labelled, for comparison")
+        e4.metric("Expected: major + destroyed", f"{exp_s:,.1f}", help=f"hard count {int(hard_s):,}")
+        st.caption(f"A normal database stores one label per building and can only count labels. This one stores four "
+                   f"probabilities, so it can also give the **expected** number: ten buildings that are each 50% likely "
+                   f"destroyed count as 5, not as 0 or 10. {disaster.replace('-', ' ').title()}, {int(n_):,} test buildings:")
+        st.code("SELECT SUM(p.pred_idx = 3)  AS hard_count,\n       SUM(p.p_destroyed)   AS expected_count\n"
+                "FROM predictions p JOIN buildings b ON b.uid = p.uid\n"
+                "WHERE p.model_version = ? AND b.disaster = ? AND b.split = 'test';", language="sql")
+    st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("📐 Calibration: is a 90%-confident prediction actually right 90% of the time?")
     calib_rows = db.execute(
         "SELECT b.label, p.pred_idx, p.confidence FROM buildings b JOIN predictions p ON p.uid = b.uid "
@@ -807,9 +913,10 @@ with tab_prob:
                                     hovertemplate="p_minor %{x:.2f}<br>p_major %{y:.2f}<br>p_destroyed %{z:.2f}"
                                                   f"<extra>{cls_name}</extra>")
         axis = dict(range=[0, 1], gridcolor=GRID, backgroundcolor="rgba(0,0,0,0)", showbackground=False)
-        fig3d.update_layout(height=520, scene=dict(xaxis=dict(title="p_minor", **axis), yaxis=dict(title="p_major", **axis),
-                                                   zaxis=dict(title="p_destroyed", **axis), aspectmode="cube",
-                                                   camera=dict(eye=dict(x=1.6, y=1.4, z=0.9))))
+        fig3d.update_layout(height=460, margin=dict(l=0, r=0, t=60, b=0),
+                            scene=dict(xaxis=dict(title="p_minor", **axis), yaxis=dict(title="p_major", **axis),
+                                       zaxis=dict(title="p_destroyed", **axis), aspectmode="cube",
+                                       camera=dict(eye=dict(x=1.25, y=1.1, z=0.75))))
         st.plotly_chart(plotly_theme(fig3d, f"Stored class probabilities, {len(pdf3):,} test buildings"),
                         width="stretch", config={"displayModeBar": False})
     else:
@@ -824,19 +931,21 @@ with tab_prob:
     if len(all_test_buildings):
         # Default the query to the biggest hotspot's neighbourhood, not an arbitrary (possibly
         # empty-looking) building - an empty-by-default panel reads as broken, not "try the sliders".
-        hotspots_here = db.execute("SELECT lon, lat FROM hotspots WHERE model_version = ? AND disaster = ? "
-                                    "ORDER BY n_buildings DESC LIMIT 1", (version, disaster)).fetchone()
-        # Default class: the severe class (destroyed, else major) with the most confident (>= 0.5) predictions here.
+        # Default query that is never empty: the ~500 m cell holding the most confident (>= 0.5) predictions of one
+        # severe class (destroyed or major), centred there and filtered on that class.
         sure = df_test[(df_test["confidence"] >= 0.5) & df_test["lon"].notna()]
-        default_cls = next((c for c in (3, 2) if (sure["pred_idx"] == c).sum() >= 5), 3)
-        if hotspots_here:
-            cx, cy = hotspots_here
-        else:  # densest ~500 m cell of confident predictions of that class
-            pool = sure[sure["pred_idx"] == default_cls]
-            pool = pool if len(pool) else all_test_buildings
-            cells = pool.groupby([(pool["lon"] / 0.005).round(), (pool["lat"] / 0.005).round()])
-            g = cells.get_group(cells.size().idxmax())
-            cx, cy = g["lon"].mean(), g["lat"].mean()
+        best = None
+        for c_ in (3, 2):
+            pool = sure[sure["pred_idx"] == c_]
+            if len(pool):
+                cells = pool.groupby([(pool["lon"] / 0.005).round(), (pool["lat"] / 0.005).round()])
+                g = cells.get_group(cells.size().idxmax())
+                if best is None or len(g) > best[0]:
+                    best = (len(g), c_, g["lon"].mean(), g["lat"].mean())
+        if best:
+            _, default_cls, cx, cy = best
+        else:
+            default_cls, cx, cy = 3, all_test_buildings["lon"].mean(), all_test_buildings["lat"].mean()
         d2 = (all_test_buildings["lon"] - cx) ** 2 + (all_test_buildings["lat"] - cy) ** 2
         default_uid = all_test_buildings.loc[d2.idxmin(), "uid"]
         uid_list = all_test_buildings["uid"].tolist()
@@ -939,6 +1048,58 @@ def schema_overview(url: str):
     return pd.DataFrame(rows)
 
 
+# (child table, child column(s), parent table, label) - mirrors the FOREIGN KEYs in sql/postgres_schema.sql
+ER_EDGES = [("images", "disaster", "disasters", "N : 1"), ("buildings", "image_id", "images", "N : 1"),
+            ("buildings", "disaster", "disasters", "N : 1"), ("crops", "uid", "buildings", "1 : 1"),
+            ("predictions", "uid", "buildings", "N : 1"), ("review_queue", "uid, model_version", "predictions", "0..1 : 1"),
+            ("human_reviews", "uid", "buildings", "N : 1"), ("hotspots", "disaster", "disasters", "N : 1"),
+            ("field_inspections", "disaster", "disasters", "N : 1"), ("field_matches", "uid", "buildings", "0..1 : 1"),
+            ("field_matches", "field_id", "field_inspections", "N : 1")]
+ER_LOGICAL = [("predictions", "model_runs", "model_version")]
+
+
+@st.cache_data(show_spinner=False)
+def er_diagram(url: str) -> str:
+    """Graphviz DOT for the ER diagram; columns come from the live database."""
+    conn = ro_connection(url)
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                         "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()]
+    fk_cols = {}
+    for child, cols, parent, _ in ER_EDGES:
+        fk_cols.setdefault(child, set()).update(c.strip() for c in cols.split(","))
+    big = {"crops": "BLOB columns: pre_png, post_png"}
+    lines = ['digraph ER {', 'graph [rankdir=LR, bgcolor="transparent", pad=0.3, nodesep=0.35, ranksep=0.9];',
+             'node [shape=plain, fontname="Helvetica", fontcolor="#e7ebf5", fontsize=16];',
+             'edge [color="#7c89ad", fontcolor="#aab3d6", fontname="Helvetica", fontsize=13, arrowsize=0.8, penwidth=1.4];']
+    for t in tables:
+        cols = conn.execute(f"PRAGMA table_info({t})").fetchall()  # (cid, name, type, notnull, default, pk)
+        n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        rows = []
+        for _, name, typ, _, _, pk in cols:
+            if t in big and name in ("pre_png", "post_png"):
+                continue
+            mark = "PK " if pk else ("FK " if name in fk_cols.get(t, ()) else "")
+            if not (pk or mark or len(cols) <= 7):
+                continue  # big tables: keys only, the full list is in the Schema table below
+            key_txt = f"<b>{mark}</b>" if mark else ""  # Graphviz rejects empty <b></b>
+            rows.append(f'<tr><td align="left" port="{name}"><font color="{"#facc15" if pk else "#e7ebf5"}">'
+                        f'{key_txt}{name}</font> <font color="#6b7799" point-size="13">{(typ or "?").lower()}</font>'
+                        f'</td></tr>')
+        if t in big:
+            rows.append(f'<tr><td align="left"><font color="#6b7799" point-size="13">{big[t]}</font></td></tr>')
+        lines.append(f'{t} [label=<<table border="1" cellborder="0" cellspacing="0" cellpadding="5" color="#22d3ee" '
+                     f'bgcolor="#0f172b"><tr><td bgcolor="#123047"><b>{t}</b> '
+                     f'<font color="#94a0c2" point-size="13">{n:,} rows</font></td></tr>{"".join(rows)}</table>>];')
+    for child, cols, parent, lab in ER_EDGES:
+        if child in tables and parent in tables:
+            lines.append(f'{child} -> {parent} [label="{lab}"];')
+    for a, b, lab in ER_LOGICAL:
+        if a in tables and b in tables:
+            lines.append(f'{a} -> {b} [style=dashed, label="{lab}"];')
+    lines.append("}")
+    return "\n".join(lines)
+
+
 with tab_sql:
     conn_ro = ro_connection(db_url)
     has_ai_layer = run_sql(conn_ro, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'model_runs'")[0].iat[0, 0] == 1
@@ -947,6 +1108,11 @@ with tab_sql:
     if not has_ai_layer:
         st.warning("The SQL/AI layer isn't installed in this database yet: run `python -m aftershock.sqlai --install`.")
     else:
+        st.subheader("Entity-relationship diagram")
+        st.graphviz_chart(er_diagram(db_url), width="stretch")
+        st.caption("Columns are read live from the database (PRAGMA table_info). PK = primary key (yellow), FK = foreign key. "
+                   "Edges are the foreign keys of sql/postgres_schema.sql (the PostgreSQL copy enforces all of them); "
+                   "dashed = logical link by model_version. The same schema runs in PostgreSQL 18 on this laptop.")
         st.subheader("Schema")
         schema_df = schema_overview(db_url)
         st.dataframe(schema_df, hide_index=True, width="stretch", height=38 + 35 * len(schema_df),
@@ -1018,7 +1184,9 @@ with tab_sql:
         st.code(ai_sql, language="sql")
         st.caption(f"`ai_predict()` / `ai_confidence()` are SQL functions registered on the connection that run the "
                    f"network `{net_version}` (best single network by validation macro-F1) on the PNG bytes stored in `crops`.")
-        if st.button("Run the network inside SELECT", disabled=not final_ckpt.exists()):
+        if not HAS_TORCH:
+            st.caption(LITE_NOTE)
+        if st.button("Run the network inside SELECT", disabled=not (HAS_TORCH and final_ckpt.exists())):
             st.session_state["ai_demo"] = run_sql(ai_connection(db_url, str(final_ckpt)), ai_sql)
         if "ai_demo" in st.session_state:
             ai_df, ai_ms = st.session_state["ai_demo"]
@@ -1199,25 +1367,86 @@ with tab_real:
 # ============================================================== TAB: Model quality
 with tab_quality:
     metrics_file = Path(RUNS_DIR) / version / "metrics.json"
-    if metrics_file.exists():
-        m = json.loads(metrics_file.read_text()).get("test", {})
-        if m:
-            st.caption("All numbers below are computed on the held-out **test split only** (never seen in training).")
-            pc = pd.DataFrame(m["per_class"]).T
-            mc1, mc2 = st.columns([3, 2])
-            with mc1:
-                fig2 = go.Figure()
-                for metric, color in [("precision", BLUE), ("recall", ORANGE), ("f1", AQUA)]:
-                    if metric in pc.columns:
-                        fig2.add_bar(x=pc.index, y=pc[metric], name=metric, marker_color=color, marker_line_width=0,
-                                     hovertemplate=f"<b>%{{x}}</b><br>{metric}: %{{y:.3f}}<extra></extra>")
-                fig2.update_layout(barmode="group", bargap=0.25, bargroupgap=0.08, yaxis_range=[0, 1], height=340)
-                st.plotly_chart(plotly_theme(fig2, "Per-class precision / recall / F1 (test)"), width="stretch",
-                                 config={"displayModeBar": False})
-            with mc2:
-                st.dataframe(pc, width="stretch", height=38 + 35 * len(pc))
-            lo, hi = bootstrap_macro_f1_ci(m["confusion_matrix"])
-            st.caption(f"Macro F1 {m['macro_f1']:.3f} (95% CI [{lo:.3f}, {hi:.3f}]) · harmonic F1 {m['harmonic_f1']:.3f} "
-                       f"· accuracy {m['accuracy']:.3f}")
+    m = json.loads(metrics_file.read_text()).get("test", {}) if metrics_file.exists() else {}
+    if not m:
+        st.info("No metrics.json with test results for this model yet.")
     else:
-        st.info("No metrics.json for this model yet.")
+        st.subheader(f"📈 How good is `{version}`?")
+        st.caption("Every number here is computed on the held-out **test split only**: buildings the model never saw "
+                   "while training or while being selected.")
+        lo, hi = bootstrap_macro_f1_ci(m["confusion_matrix"])
+        d = m["per_class"]["destroyed"]
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("Macro-F1", f"{m['macro_f1']:.3f}", help=f"Mean F1 over the 4 classes, so rare classes count as much as "
+                  f"common ones. 95% bootstrap CI {lo:.3f}–{hi:.3f}.")
+        q2.metric("Accuracy", f"{m['accuracy']:.1%}", help="Share of test buildings with the correct class.")
+        q3.metric("Harmonic F1", f"{m['harmonic_f1']:.3f}", help="xView2-style score: one weak class pulls it down hard.")
+        q4.metric("Destroyed: recall", f"{d['recall']:.1%}", help=f"Share of truly destroyed buildings the model finds. "
+                  f"Precision {d['precision']:.1%}.")
+
+        g1, g2 = st.columns(2)
+        with g1:
+            cm = np.array(m["confusion_matrix"], dtype=float)
+            pct = cm / np.maximum(cm.sum(1, keepdims=True), 1)
+            figc = go.Figure(go.Heatmap(z=pct, x=DAMAGE_CLASSES, y=DAMAGE_CLASSES, zmin=0, zmax=1, showscale=False,
+                                        colorscale=[[0, "#0b1224"], [1, ACCENT]],
+                                        text=[[f"{int(v):,}<br>{q:.0%}" for v, q in zip(rc, rp)] for rc, rp in zip(cm, pct)],
+                                        texttemplate="%{text}",
+                                        hovertemplate="true %{y}<br>predicted %{x}<br>%{z:.0%} of this class<extra></extra>"))
+            figc.update_layout(height=380, xaxis_title="predicted", yaxis_title="true (xBD label)")
+            figc.update_yaxes(autorange="reversed")
+            st.plotly_chart(plotly_theme(figc, "Confusion matrix (row % = recall)"), width="stretch",
+                            config={"displayModeBar": False})
+        with g2:
+            pc = pd.DataFrame(m["per_class"]).T
+            figb = go.Figure()
+            for metric, color in [("precision", BLUE), ("recall", ORANGE), ("f1", AQUA)]:
+                figb.add_bar(x=pc.index, y=pc[metric], name=metric, marker_color=color, marker_line_width=0,
+                             hovertemplate=f"<b>%{{x}}</b><br>{metric}: %{{y:.3f}}<extra></extra>")
+            figb.update_layout(barmode="group", bargap=0.25, bargroupgap=0.08, yaxis_range=[0, 1], height=380)
+            st.plotly_chart(plotly_theme(figb, "Per-class precision / recall / F1"), width="stretch",
+                            config={"displayModeBar": False})
+
+        # Coverage vs accuracy from the stored probabilities: the payoff of storing uncertainty in the database
+        sel = pd.DataFrame(db.execute(
+            "SELECT p.uncertainty, p.pred_idx = b.label_idx FROM predictions p JOIN buildings b ON b.uid = p.uid "
+            "WHERE p.model_version = ? AND b.split = 'test'", (version,)).fetchall(), columns=["unc", "correct"])
+        s1, s2 = st.columns([3, 2])
+        with s1:
+            if len(sel):
+                sel = sel.sort_values("unc").reset_index(drop=True)
+                cov = np.arange(1, len(sel) + 1) / len(sel)
+                acc_curve = sel["correct"].astype(float).cumsum().to_numpy() / np.arange(1, len(sel) + 1)
+                keep = cov >= 0.05
+                figs = go.Figure()
+                figs.add_scatter(x=cov[keep], y=acc_curve[keep], mode="lines", line=dict(color=ACCENT, width=3),
+                                 name="answer only the surest X%",
+                                 hovertemplate="model answers %{x:.0%}<br>accuracy %{y:.1%}<extra></extra>")
+                for c in (0.5, 0.8, 1.0):
+                    k = max(int(round(c * len(sel))) - 1, 0)
+                    figs.add_scatter(x=[cov[k]], y=[acc_curve[k]], mode="markers+text", marker=dict(size=10, color=ACCENT2),
+                                     text=[f"{acc_curve[k]:.1%}"], textposition="top center", showlegend=False,
+                                     hoverinfo="skip")
+                figs.update_layout(height=340, xaxis_tickformat=".0%", yaxis_tickformat=".0%",
+                                   xaxis_title="share of test buildings the model answers (most certain first)",
+                                   yaxis_title="accuracy on those", showlegend=False)
+                st.plotly_chart(plotly_theme(figs, "Selective prediction: certainty buys accuracy"), width="stretch",
+                                config={"displayModeBar": False})
+        with s2:
+            if len(sel):
+                half = acc_curve[max(int(round(0.5 * len(sel))) - 1, 0)]
+                st.markdown("#### Certainty buys accuracy")
+                st.markdown(f"Answering only its **most certain half**, the model is "
+                            f"right **{half:.1%}** of the time, against **{acc_curve[-1]:.1%}** on everything. The other "
+                            f"half goes to people: this is what storing uncertainty in the database is for.")
+                st.caption("Curve: test buildings sorted by stored MC-Dropout uncertainty (most certain first); each point "
+                           "is the accuracy on the first X% of them.")
+        st.markdown("#### Per-class results")
+        tbl = pd.DataFrame(m["per_class"]).T.reset_index(names="class")
+        if len(tbl):
+            for c_ in ("precision", "recall", "f1"):
+                tbl[c_] = tbl[c_] * 100
+            st.dataframe(tbl, hide_index=True, width="stretch", height=38 + 35 * len(tbl),
+                         column_config={c_: st.column_config.ProgressColumn(c_, min_value=0, max_value=100, format="%.1f%%")
+                                        for c_ in ("precision", "recall", "f1")}
+                         | {"support": st.column_config.NumberColumn("test buildings", format="localized")})
