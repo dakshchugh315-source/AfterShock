@@ -3,6 +3,7 @@
 streamlit run app/dashboard.py
 """
 import base64
+import importlib
 import importlib.util
 import json
 import os
@@ -26,8 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cloud_data  # noqa: E402
 if cloud_data.needed(Path(__file__).resolve().parents[1]):  # hosted: fetch the public data bundle first
     cloud_data.ensure()
-from city3d import render_city3d, render_compare3d  # noqa: E402
+import city3d  # noqa: E402
 import figures  # noqa: E402
+# Streamlit re-runs this file on every interaction but keeps imported helper modules in memory. After an update on
+# the server that can mix a new dashboard.py with an old figures.py; reloading them keeps all files in step.
+importlib.reload(city3d)
+importlib.reload(figures)
+from city3d import render_city3d, render_compare3d  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
 from aftershock.db import DB  # noqa: E402
 # PyTorch is imported only when a network is actually run (Grad-CAM, ai_predict), which keeps memory low on a
@@ -892,8 +898,11 @@ with tab_explain:
                 net_arch = ""
             if cam_out:
                 pre_rgb, post_rgb, cam, pred, conf = cam_out
-                st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf,
-                                               uses_pre=net_arch != "post"), width="stretch")
+                try:  # a failing figure must not take the other tabs down with it
+                    st.image(figures.gradcam_sheet(pre_rgb, post_rgb, cam, net_for_cam, pred, conf,
+                                                   uses_pre=net_arch != "post"), width="stretch")
+                except Exception as e:  # noqa: BLE001
+                    st.warning(f"Grad-CAM figure could not be drawn ({type(e).__name__}). Reload the page.")
             st.caption("Grad-CAM (Selvaraju et al., 2017): the gradient of the predicted class with respect to the "
                        "last convolutional features shows which parts of the input pushed the decision. Red = strong "
                        "influence, blue = ignored."
