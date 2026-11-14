@@ -165,3 +165,114 @@ def render_city3d(shown, footprints: dict, hotspot_rows, center, title: str, hei
             .replace("__H__", str(height)).replace("__TITLE__", title).replace("__LEGEND__", legend)
             .replace("__STATS__", stats))
     components.html(html, height=height + 4)
+
+
+# ---------------------------------------------------------------- side-by-side comparison (one shared camera)
+_COMPARE_HTML = r"""
+<div id="wrap">
+  <div class="pane"><div id="mapA" class="map"></div><div class="hud top"><div class="title">__TITLE_A__</div>
+    <div class="sub">__SUB_A__</div></div></div>
+  <div class="pane"><div id="mapB" class="map"></div><div class="hud top"><div class="title">__TITLE_B__</div>
+    <div class="sub">__SUB_B__</div></div></div>
+  <div class="hud legend">__LEGEND__</div>
+  <div class="hud ctrl"><button id="bOrbit">⏸ Orbit</button><button id="bTop">🛰 Top view</button>
+    <button id="bTilt">🎥 Tilt</button><button id="bDiff">◐ Highlight differences</button></div>
+</div>
+<style>
+  html, body {margin:0; background:transparent; font-family:Inter, system-ui, sans-serif;}
+  #wrap {position:relative; display:grid; grid-template-columns:1fr 1fr; gap:6px; height:__H__px;}
+  .pane {position:relative; border-radius:14px; overflow:hidden; background:#05080f; border:1px solid #1f2a44;}
+  .map {position:absolute; inset:0;}
+  .hud {position:absolute; z-index:2; color:#e7ebf5; backdrop-filter:blur(8px); background:#070b18cc;
+        border:1px solid #ffffff1f; border-radius:12px; padding:7px 11px;}
+  .top {left:10px; top:10px;} .title {font-weight:700; font-size:13.5px;} .sub {font-size:11px; color:#9aa6c8; margin-top:2px;}
+  .legend {right:10px; bottom:58px; display:flex; gap:10px; font-size:11px; color:#c9d0ea;}
+  .legend i {display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:4px; vertical-align:-1px;}
+  .ctrl {left:50%; transform:translateX(-50%); bottom:10px; display:flex; gap:6px; padding:6px;}
+  .ctrl button {background:#ffffff14; color:#fff; border:1px solid #ffffff2a; border-radius:8px; padding:6px 10px;
+                font-size:12px; cursor:pointer;}
+  .ctrl button:hover, .ctrl button.on {background:#22d3ee33; border-color:#22d3ee;}
+  @media (max-width:700px) {#wrap {grid-template-columns:1fr; height:auto;} .pane {height:360px;} .legend {display:none;}}
+</style>
+<script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
+<script>
+const A = __DATA_A__, B = __DATA_B__, RGB = __RGB__, NAMES = __NAMES__;
+const HEIGHT = [4, 12, 26, 44];
+let vs = {longitude: __LON__, latitude: __LAT__, zoom: 16.2, pitch: 58, bearing: -25, maxPitch: 85, minZoom: 11, maxZoom: 20};
+let orbit = true, target = null, diffOnly = false, t0 = performance.now(), eased = 0;
+const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (reduce) { orbit = false; eased = 1; }
+const sat = id => new deck.TileLayer({id: 'sat-' + id,
+  data: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  minZoom: 0, maxZoom: 19, tileSize: 256,
+  renderSubLayers: p => { const b = p.tile.bbox;
+    return new deck.BitmapLayer(p, {data: null, image: p.data, bounds: [b.west, b.south, b.east, b.north]}); }});
+function blocks(id, data) {
+  return new deck.PolygonLayer({id: 'b-' + id, data, getPolygon: d => d.p, extruded: true,
+    getElevation: d => HEIGHT[d.c], elevationScale: eased,
+    getFillColor: d => RGB[d.c].concat(diffOnly && !d.d ? 35 : (d.c >= 2 ? 240 : 190)),
+    updateTriggers: {getFillColor: diffOnly}, pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 110],
+    material: {ambient: 0.35, diffuse: 0.65, shininess: 48, specularColor: [255, 225, 205]}});
+}
+const tip = ({object}) => object && object.c !== undefined && {
+  html: `<b>model:</b> <span style="color:rgb(${RGB[object.m]})">${NAMES[object.m]}</span> (${Math.round(object.f * 100)}%)<br>` +
+        `<b>inspectors:</b> <span style="color:rgb(${RGB[object.g]})">${NAMES[object.g]}</span> · ${object.r}` +
+        (object.d ? '<br><b style="color:#fde047">disagree</b>' : ''),
+  style: {background: '#0b1224', color: '#e7ebf5', fontSize: '12px', borderRadius: '8px', border: '1px solid #1f2a44'}};
+function onVS({viewState, interactionState}) {
+  vs = viewState;
+  if (interactionState && (interactionState.isDragging || interactionState.isZooming || interactionState.isRotating ||
+      interactionState.isPanning)) { orbit = false; target = null; sync(); }
+}
+const da = new deck.DeckGL({container: 'mapA', viewState: vs, controller: true, onViewStateChange: onVS, getTooltip: tip});
+const db = new deck.DeckGL({container: 'mapB', viewState: vs, controller: true, onViewStateChange: onVS, getTooltip: tip});
+function frame(now) {
+  if (!reduce) { const r = Math.min(1, (now - t0) / 1800); eased = 1 - Math.pow(1 - r, 3); }
+  if (orbit) vs = {...vs, bearing: vs.bearing + 0.06};
+  if (target) { const nv = {...vs}; let done = true;
+    for (const k of Object.keys(target)) { nv[k] = vs[k] + (target[k] - vs[k]) * 0.08; if (Math.abs(target[k] - nv[k]) > 0.05) done = false; }
+    vs = nv; if (done) target = null; }
+  da.setProps({viewState: vs, layers: [sat('a'), blocks('a', A)]});
+  db.setProps({viewState: vs, layers: [sat('b'), blocks('b', B)]});
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+const bO = document.getElementById('bOrbit'), bD = document.getElementById('bDiff');
+function sync() { bO.textContent = orbit ? '⏸ Orbit' : '▶ Orbit'; bD.classList.toggle('on', diffOnly); }
+bO.onclick = () => { orbit = !orbit; sync(); };
+bD.onclick = () => { diffOnly = !diffOnly; sync(); };
+document.getElementById('bTop').onclick = () => { orbit = false; sync(); target = {pitch: 0, bearing: 0, zoom: 15.6}; };
+document.getElementById('bTilt').onclick = () => { target = {pitch: 58, zoom: 16.3}; };
+sync();
+</script>
+"""
+
+
+def render_compare3d(df, footprints: dict, center, title_a: str, title_b: str, sub_a: str = "", sub_b: str = "",
+                     height: int = 560):
+    """Two synced 3D maps of the SAME buildings. df columns: uid, lon, lat, pred_idx (model), field_idx (inspectors),
+    field_raw, confidence. Left = model class, right = inspector class; 'Highlight differences' fades agreeing ones."""
+    a, b = [], []
+    for r in df.itertuples():
+        wkt = footprints.get(r.uid)
+        if not wkt:
+            continue
+        geom = shapely_wkt.loads(wkt)
+        if geom.geom_type == "MultiPolygon":
+            geom = max(geom.geoms, key=lambda g: g.area)
+        ring = [[round(x, 7), round(y, 7)] for x, y in geom.exterior.coords]
+        m, g = int(r.pred_idx), int(r.field_idx)
+        common = {"p": ring, "m": m, "g": g, "f": round(float(r.confidence), 3), "r": str(r.field_raw),
+                  "d": int((m == 3) != (g == 3))}  # disagreement on destroyed vs not
+        a.append({**common, "c": m})
+        b.append({**common, "c": g})
+    legend = "".join(f'<span><i style="background:rgb({",".join(map(str, RGB[i]))})"></i>{NAMES[i]}</span>' for i in range(4))
+
+    def js(obj):
+        return json.dumps(obj, separators=(",", ":")).replace("</", "<\\/")
+
+    html = (_COMPARE_HTML.replace("__DATA_A__", js(a)).replace("__DATA_B__", js(b)).replace("__RGB__", js(RGB))
+            .replace("__NAMES__", js(NAMES)).replace("__LON__", str(center[0])).replace("__LAT__", str(center[1]))
+            .replace("__H__", str(height)).replace("__TITLE_A__", title_a).replace("__TITLE_B__", title_b)
+            .replace("__SUB_A__", sub_a).replace("__SUB_B__", sub_b).replace("__LEGEND__", legend))
+    components.html(html, height=height + 6)

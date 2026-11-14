@@ -46,6 +46,27 @@
     stacking context, so a table opened fullscreen was trapped under the sidebar with its first column hidden.
     Animations are now opacity-only with no fill-mode, and tables keep Streamlit's own styling. Schema row
     counts use thousands separators.
+44. **Accuracy without retraining** (`scripts/improve_model.py`): test-time augmentation (flips/rotation, same
+    transform on pre and post), ensembling, and per-class log-probability offsets fitted on VALIDATION to
+    maximise macro-F1. Every candidate is chosen on validation; test is evaluated once. Result stored as a new
+    model_version with runs/<name>/metrics.json, so the dashboard picks it automatically if its validation
+    macro-F1 is best. Pilot DB (64 px pilot models): best single test macro-F1 0.616 -> 0.637, accuracy
+    0.621 -> 0.654 (`runs/pilot_ensemble_tuned/candidates.json`); destroyed recall drops 0.736 -> 0.657,
+    reported as a trade-off. Grad-CAM and ai_predict() fall back to the best single network for an ensemble.
+45. **Real-world check against CAL FIRE field inspections** (`scripts/fetch_dins.py`,
+    `src/aftershock/fieldcheck.py`): 5,759 public DINS inspections of the 2017 Tubbs fire (damage + location
+    only) loaded into `field_inspections` (CHECK on damage class, geo index). One SQL statement matches each
+    building to its nearest inspection (bounding-box join on the index + distance + ROW_NUMBER() OVER
+    (PARTITION BY building)) into `field_matches`; views `v_field_compare`, `v_field_vs_model`.
+    Radius sweep (pilot DB): 8 m 2,847 matches / model 96.1% / xBD 98.1%; 12 m 3,174 / 96.0% / 98.0%;
+    25 m 3,547 / 92.2% / 96.5%. Larger radii start matching a neighbour's inspection point, so 12 m is the
+    default. On the same 371 test buildings, destroyed-vs-not accuracy: model 96.0%, xBD human labels 96.5%.
+    Light damage (Affected/Minor 1-25%) is mostly invisible from above even for the annotators.
+    Pre-2018 DINS lists only damaged structures: unmatched buildings are reported separately, never scored.
+46. Dashboard tab **Real-world check**: KPIs and both confusion matrices on the SAME buildings, a comparison
+    table, plain-language findings, twin synced 3D maps (model | inspectors, one camera, "highlight
+    differences"), a building-by-building table (disagreements or all) and the SQL behind it.
+47. Per-disaster and hotspot tables sized to their rows (no empty filler rows); accuracy shown as bars.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

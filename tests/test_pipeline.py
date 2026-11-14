@@ -133,3 +133,30 @@ def test_sql_ai_layer(tmp_path):
     assert db.execute("SELECT expected_destroyed, hard_destroyed FROM v_disaster_damage").fetchone() == (1.0, 1)
     db.execute("INSERT INTO human_reviews (uid, model_version, reviewer, label_idx) VALUES ('b', 'm', 'x', 0)")
     assert db.execute("SELECT COUNT(*) FROM v_review_queue").fetchone()[0] == 0
+
+
+def test_field_check_spatial_join(tmp_path):
+    """Nearest inspection within the radius is matched in SQL; far points are not; scores use matched rows only."""
+    import json as _json
+    from aftershock import fieldcheck
+    db = DB(f"sqlite:///{(tmp_path / 'f.db').as_posix()}")
+    db.init_schema()
+    db.upsert("buildings", ["uid", "disaster", "split", "label_idx", "lon", "lat"],
+              [("a", "fire", "test", 3, -122.70000, 38.50000), ("b", "fire", "test", 0, -122.70100, 38.50000),
+               ("c", "fire", "test", 0, -122.71000, 38.50000)])
+    db.upsert("predictions", ["uid", "model_version", "pred_idx", "p_no", "p_minor", "p_major", "p_destroyed",
+                              "confidence", "uncertainty"],
+              [("a", "m", 3, 0, 0, 0, 1, 1, 0), ("b", "m", 3, 0, 0, 0, 1, 1, 0), ("c", "m", 0, 1, 0, 0, 0, 1, 0)])
+    recs = [{"OBJECTID": 1, "INCIDENTNAME": "X", "DAMAGE": "Destroyed (>50%)", "LATITUDE": 38.50002, "LONGITUDE": -122.70001},
+            {"OBJECTID": 2, "INCIDENTNAME": "X", "DAMAGE": "No Damage", "LATITUDE": 38.50001, "LONGITUDE": -122.70100},
+            {"OBJECTID": 3, "INCIDENTNAME": "X", "DAMAGE": "Destroyed (>50%)", "LATITUDE": 38.60000, "LONGITUDE": -122.80000}]
+    f = tmp_path / "dins.json"
+    f.write_text(_json.dumps({"records": recs}))
+    fieldcheck.install(db)
+    assert fieldcheck.load(db, str(f), "fire") == 3
+    assert fieldcheck.match(db, "fire", 12) == 2          # a->1 (~2.5 m), b->2 (~1 m); c has nothing within 12 m
+    res = fieldcheck.compare(db, "fire", "m")
+    assert res["model_vs_field"]["n"] == 2
+    assert res["model_vs_field"]["destroyed"]["recall"] == 1.0      # a: destroyed, found
+    assert res["model_vs_field"]["destroyed"]["precision"] == 0.5   # b: model says destroyed, field says no damage
+    assert res["model_on_unrecorded"]["n"] == 1

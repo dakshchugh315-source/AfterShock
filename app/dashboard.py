@@ -23,13 +23,14 @@ from streamlit_folium import st_folium
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from city3d import render_city3d  # noqa: E402
+from city3d import render_city3d, render_compare3d  # noqa: E402
 from aftershock.config import DAMAGE_CLASSES, DATA_DIR, RUNS_DIR  # noqa: E402
 from aftershock.data import png_to_tensor  # noqa: E402
 from aftershock.db import DB  # noqa: E402
 from aftershock.explain import explanation_panel, gradcam  # noqa: E402
 from aftershock.model import load_checkpoint  # noqa: E402
 from aftershock.sqlai import register_functions  # noqa: E402
+from aftershock import fieldcheck  # noqa: E402
 
 SHORT_NAMES = {"post_focal": "Post-only", "siamese_focal": "Siamese", "siamese_fm_focal": "Siamese-FM"}
 
@@ -308,6 +309,12 @@ iframe {{pointer-events:auto;}}
 @media (max-width: 700px) {{ .as-globe-wrap {{display:none;}} .as-hero {{padding:20px;}} }}
 </style>
 """, unsafe_allow_html=True)
+def fieldcheck_radius(db_, disaster_):
+    r = db_.execute("SELECT MAX(radius_m) FROM field_matches m JOIN buildings b ON b.uid = m.uid WHERE b.disaster = ?",
+                    (disaster_,)).fetchone()[0]
+    return r or 0.0
+
+
 def render_hero(stats=None):
     """Header banner. `stats` = live COUNT(*)s from the database (None if no DB is configured)."""
     steps = [("🛰️", "Pre + post imagery"), ("🗄️", "SQL database"), ("🧠", "Siamese CNN"),
@@ -397,9 +404,9 @@ def lift(gdf):
     b, w = gdf.loc[best, "test macro F1"], gdf.loc[worst, "test macro F1"]
     return best, worst, (b - w) * 100, (b / w - 1) * 100
 
-tab_overview, tab_map, tab_explain, tab_prob, tab_sql, tab_quality = st.tabs(
-    ["🏠 Overview", "🗺️ Map & hotspots", "🧠 Grad-CAM (XAI)",
-     "🔎 Probabilistic DB", "🗄️ Database & SQL", "📈 Model quality"])
+tab_overview, tab_map, tab_explain, tab_prob, tab_sql, tab_real, tab_quality = st.tabs(
+    ["🏠 Overview", "🗺️ Map & hotspots", "🧠 Grad-CAM", "🔎 Probabilistic DB", "🗄️ Database & SQL",
+     "🌍 Real-world check", "📈 Quality"])
 
 # ============================================================== TAB: Overview & honesty
 with tab_overview:
@@ -493,6 +500,10 @@ if not versions:
 val_scores = {v: json.loads((Path(RUNS_DIR) / v / "metrics.json").read_text()).get("best_val_macro_f1", -1)
               for v in versions if (Path(RUNS_DIR) / v / "metrics.json").exists()}
 final_version = max(val_scores, key=val_scores.get) if val_scores else versions[0]
+# An ensemble / calibrated result has no single network file. Grad-CAM and the SQL functions then use
+# the best single network (by validation macro-F1) that has a checkpoint.
+_nets = [v for v in sorted(val_scores, key=val_scores.get, reverse=True) if (Path(RUNS_DIR) / v / "best.pt").exists()]
+net_version = _nets[0] if _nets else final_version
 st.sidebar.markdown("""<div class="as-brand"><div class="as-brand-logo">🛰️</div>
 <div><div class="as-brand-name">AfterShock</div><div class="as-brand-sub">Damage control panel</div></div></div>
 <div class="as-side-label">Model &amp; area</div>""", unsafe_allow_html=True)
@@ -615,7 +626,7 @@ with tab_map:
         if hotspot_rows:
             hs_df = pd.DataFrame(hotspot_rows, columns=["cluster", "buildings", "lon", "lat", "mean confidence"])
             st.dataframe(hs_df.style.format({"mean confidence": "{:.0%}", "lon": "{:.4f}", "lat": "{:.4f}"}),
-                         hide_index=True, width="stretch", height=240)
+                         hide_index=True, width="stretch", height=min(38 + 35 * len(hs_df), 320))
         else:
             st.info(f"No DBSCAN hotspots stored for {disaster} with model `{version}`. Hotspots are mined only "
                     f"for the final model; pick another disaster or model from the sidebar.")
@@ -629,8 +640,12 @@ with tab_map:
             per_disaster = pdf.groupby("disaster").apply(
                 lambda g: pd.Series({"test buildings": len(g), "accuracy": (g["predicted"] == g["true_label"]).mean()}),
                 include_groups=False)
-            st.dataframe(per_disaster.sort_values("test buildings", ascending=False).style.format({"accuracy": "{:.0%}", "test buildings": "{:,.0f}"}),
-                         width="stretch", height=260)
+            per_disaster = per_disaster.sort_values("test buildings", ascending=False)
+            per_disaster["accuracy"] = per_disaster["accuracy"] * 100
+            st.dataframe(per_disaster, width="stretch", height=38 + 35 * len(per_disaster),  # no empty filler rows
+                         column_config={"test buildings": st.column_config.NumberColumn(format="localized"),
+                                        "accuracy": st.column_config.ProgressColumn("test accuracy", min_value=0,
+                                                                                    max_value=100, format="%.0f%%")})
         else:
             st.caption("No test-split predictions stored for this model yet.")
 
@@ -720,7 +735,7 @@ with tab_explain:
             a.image(crisp(Image.open(io.BytesIO(pre_png))), caption="Before", width="stretch")
             b.image(crisp(Image.open(io.BytesIO(post_png))), caption="After", width="stretch")
             cam_path = Path(RUNS_DIR) / version / "explanations" / f"{uid}.png"
-            ckpt_path = Path(RUNS_DIR) / version / "best.pt"
+            ckpt_path = Path(RUNS_DIR) / (version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version) / "best.pt"
             if cam_path.exists():
                 st.image(crisp(Image.open(cam_path), size=960), caption="Grad-CAM: before | after | heatmap", width="stretch")
             elif ckpt_path.exists():
@@ -973,14 +988,14 @@ with tab_sql:
             st.dataframe(st.session_state["index_demo"], hide_index=True, width="stretch")
 
         st.subheader("AI inside SQL")
-        final_ckpt = Path(RUNS_DIR) / final_version / "best.pt"
+        final_ckpt = Path(RUNS_DIR) / net_version / "best.pt"
         ai_sql = ("SELECT b.uid,\n       damage_label(b.label_idx)            AS truth,\n"
                   "       ai_predict(c.pre_png, c.post_png)    AS ai,\n"
                   "       ai_confidence(c.pre_png, c.post_png) AS conf\n"
                   "FROM buildings b JOIN crops c ON c.uid = b.uid\nWHERE b.split = 'test'\nLIMIT 5;")
         st.code(ai_sql, language="sql")
         st.caption(f"`ai_predict()` / `ai_confidence()` are SQL functions registered on the connection that run the "
-                   f"final model (`{final_version}`, chosen by validation macro-F1) on the PNG bytes stored in `crops`.")
+                   f"network `{net_version}` (best single network by validation macro-F1) on the PNG bytes stored in `crops`.")
         if st.button("Run the network inside SELECT", disabled=not final_ckpt.exists()):
             st.session_state["ai_demo"] = run_sql(ai_connection(db_url, str(final_ckpt)), ai_sql)
         if "ai_demo" in st.session_state:
@@ -996,6 +1011,168 @@ with tab_sql:
                                  "GROUP BY model_version, status ORDER BY model_version, status")
         st.dataframe(rq, hide_index=True, width="stretch")
         st.caption(f"review_queue holds {int(rq['n'].sum()):,} rows in total.")
+
+# ============================================================== TAB: Real-world check (CAL FIRE field inspections)
+with tab_real:
+    st.subheader("🌍 Does the model agree with inspectors on the ground?")
+    st.markdown("After a California wildfire, **CAL FIRE inspectors visit every structure** and record its damage "
+                "(the public *Damage Inspection* database, DINS). That is real-world evidence collected on foot, "
+                "independent of the satellite labels and never seen by the model. Each satellite building is matched "
+                "to its nearest inspection point **inside the database, with one SQL spatial join**.")
+    try:
+        field_disasters = [r[0] for r in db.execute("SELECT DISTINCT disaster FROM field_inspections").fetchall()]
+    except Exception:
+        field_disasters = []
+    if not field_disasters:
+        st.info("No field inspections loaded in this database yet. Run `python scripts/fetch_dins.py ...` and "
+                "`python -m aftershock.fieldcheck --load ...` (see the module docstring).")
+    else:
+        fd = st.selectbox("Disaster with field data", field_disasters,
+                          index=field_disasters.index(disaster) if disaster in field_disasters else 0, key="field_disaster")
+        res = fieldcheck.compare(db, fd, version)
+        inc = db.execute("SELECT GROUP_CONCAT(DISTINCT incident), COUNT(*) FROM field_inspections WHERE disaster = ?",
+                         (fd,)).fetchone()
+        xall, mv = res["xbd_vs_field"], res.get("model_vs_field", {"n": 0})
+        # Score the xBD labels on the SAME buildings as the model when possible, so the two are directly comparable.
+        xv = res["xbd_vs_field_same"] if mv["n"] else xall
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Field inspections", f"{inc[1]:,}", help=f"CAL FIRE DINS, incident: {inc[0]}")
+        k2.metric("Buildings compared", f"{xv['n']:,}",
+                  help=f"test buildings with both a model prediction and an inspection within the radius. "
+                       f"All matched buildings (any split): {xall['n']:,}; mean distance {(res['dist'][0] or 0):.1f} m")
+        if mv["n"]:
+            k3.metric("Model vs inspectors", f"{mv['destroyed']['accuracy']:.1%}",
+                      help=f"destroyed vs not, on {mv['n']:,} test buildings with an inspection. "
+                           f"Recall {mv['destroyed']['recall']:.1%}, precision {mv['destroyed']['precision']:.1%}.")
+        else:
+            k3.metric("Model vs inspectors", "–", help="this model has no test predictions with a matched inspection")
+        k4.metric("xBD labels vs inspectors", f"{xv['destroyed']['accuracy']:.1%}",
+                  help=f"destroyed vs not, on the same {xv['n']:,} buildings. On all {xall['n']:,} matched buildings: "
+                       f"{xall['destroyed']['accuracy']:.1%}")
+
+        def cm_fig(cm, title, xname):
+            z = np.array(cm, dtype=float)
+            pct = z / np.maximum(z.sum(1, keepdims=True), 1)
+            fig = go.Figure(go.Heatmap(z=pct, x=DAMAGE_CLASSES, y=DAMAGE_CLASSES,
+                                       colorscale=[[0, "#0b1224"], [1, ACCENT]], zmin=0, zmax=1, showscale=False,
+                                       text=[[f"{int(v):,}" for v in row] for row in z], texttemplate="%{text}",
+                                       hovertemplate="field %{y}<br>" + xname +
+                                       " %{x}<br>%{z:.0%} of this field class<extra></extra>"))
+            fig.update_layout(height=330, xaxis_title=xname, yaxis_title="field inspectors")
+            fig.update_yaxes(autorange="reversed")
+            return plotly_theme(fig, title)
+
+        c1, c2 = st.columns(2)
+        if mv["n"]:
+            c1.plotly_chart(cm_fig(mv["confusion_field_rows"], f"Model ({version}) vs inspectors · {mv['n']:,} test buildings",
+                                   "model"), width="stretch", config={"displayModeBar": False})
+        else:
+            c1.info("Pick a model with test predictions for this disaster in the sidebar.")
+        c2.plotly_chart(cm_fig(xv["confusion_field_rows"], f"xBD labels vs inspectors · same {xv['n']:,} buildings",
+                               "xBD label"), width="stretch", config={"displayModeBar": False})
+        if mv["n"]:
+            comp = pd.DataFrame([
+                {"compared with inspectors": f"Model ({version})", "buildings": mv["n"],
+                 "same class": mv["exact"] * 100, "destroyed: accuracy": mv["destroyed"]["accuracy"] * 100,
+                 "destroyed: recall": mv["destroyed"]["recall"] * 100,
+                 "destroyed: precision": mv["destroyed"]["precision"] * 100},
+                {"compared with inspectors": "xBD labels (human annotators)", "buildings": xv["n"],
+                 "same class": xv["exact"] * 100, "destroyed: accuracy": xv["destroyed"]["accuracy"] * 100,
+                 "destroyed: recall": xv["destroyed"]["recall"] * 100,
+                 "destroyed: precision": xv["destroyed"]["precision"] * 100}])
+            pct = {c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%.1f%%")
+                   for c in ["same class", "destroyed: accuracy", "destroyed: recall", "destroyed: precision"]}
+            st.dataframe(comp, hide_index=True, width="stretch", height=38 + 35 * 2, column_config=pct)
+            st.caption(f"Same {mv['n']:,} test buildings in both rows, so the numbers compare directly. "
+                       f"The xBD labels were drawn by human annotators from the same satellite images; the model "
+                       f"learned from such labels. On all {xall['n']:,} matched buildings (every split) the xBD "
+                       f"labels agree {xall['destroyed']['accuracy']:.1%} on destroyed vs not.")
+
+        # Plain-language findings, computed from the matrices above
+        cmx = np.array(xall["confusion_field_rows"])
+        light, light_as_none = int(cmx[1].sum()), int(cmx[1][0])
+        notes = [f"**Destroyed homes are clear from space.** The satellite labels agree with the inspectors on "
+                 f"*destroyed vs not* for {xall['destroyed']['accuracy']:.1%} of all {xall['n']:,} matched buildings."]
+        if mv["n"]:
+            notes.append(f"**The model finds {mv['destroyed']['recall']:.1%} of the buildings inspectors recorded as "
+                         f"destroyed**, and {mv['destroyed']['precision']:.1%} of its 'destroyed' calls are confirmed "
+                         f"on the ground.")
+        if light:
+            notes.append(f"**Light damage is invisible from above.** Of {light:,} buildings inspectors rated "
+                         f"'affected/minor' (1-25%), {light_as_none:,} are labelled *no-damage* even in xBD: scorched "
+                         f"siding or a broken window cannot be seen in a roof-top image at ~0.5 m/pixel.")
+        un = res.get("model_on_unrecorded")
+        if un and un["n"]:
+            notes.append(f"Before 2018 DINS listed only damaged structures, so {un['n']:,} test buildings have no "
+                         f"inspection nearby ('not recorded as damaged'); the model calls {un['pred_destroyed']:,} of "
+                         f"them destroyed. These are kept out of the scores above, not counted as right or wrong.")
+        for n_ in notes:
+            st.markdown("- " + n_)
+
+        st.markdown("### 🏙️ Model vs inspectors in 3D: same buildings, one camera")
+        st.caption("Left: what the model predicted from the satellite images. Right: what CAL FIRE inspectors recorded "
+                   "on the ground. Both maps share one camera, so rotating or zooming one moves the other. "
+                   "Press **Highlight differences** to fade every building where they agree.")
+        dis = pd.DataFrame(db.execute(
+            "SELECT uid, lon, lat, pred_idx, field_idx, field_raw, confidence, dist_m FROM v_field_vs_model "
+            "WHERE disaster = ? AND model_version = ? AND field_idx IS NOT NULL", (fd, version)).fetchall(),
+            columns=["uid", "lon", "lat", "pred_idx", "field_idx", "field_raw", "confidence", "dist_m"])
+        if len(dis):
+            def verdict(r):
+                if (r.pred_idx == 3) == (r.field_idx == 3):
+                    return "agree"
+                return "missed (field: destroyed)" if r.field_idx == 3 else "false alarm"
+            vcol = {"agree": GOOD, "missed (field: destroyed)": CRITICAL, "false alarm": WARNING}
+            dis["verdict"] = [verdict(r) for r in dis.itertuples()]
+            fpf = dict(db.execute(
+                "SELECT b.uid, b.footprint_wkt FROM buildings b JOIN v_field_vs_model v ON v.uid = b.uid "
+                "WHERE v.disaster = ? AND v.model_version = ? AND v.field_idx IS NOT NULL", (fd, version)).fetchall())
+            # open on the ~1 km cell with the most disagreements (else the most buildings)
+            focus = dis[dis["verdict"] != "agree"] if (dis["verdict"] != "agree").any() else dis
+            cells = focus.groupby([(focus["lon"] / 0.01).round(), (focus["lat"] / 0.01).round()])
+            fcell = cells.get_group(cells.size().idxmax())
+            vc = dis["verdict"].value_counts()
+            render_compare3d(dis, fpf, (float(fcell["lon"].mean()), float(fcell["lat"].mean())),
+                             f"🤖 Model · {version}", "👷 CAL FIRE inspectors (ground truth)",
+                             sub_a=f"{len(dis):,} test buildings · prediction from satellite images",
+                             sub_b=f"field inspection matched within {fieldcheck_radius(db, fd):.0f} m",
+                             height=560)
+            st.markdown(" ".join(f'<span class="legend-chip"><span class="legend-dot" style="background:{c}"></span>'
+                                 f'{v} ({int(vc.get(v, 0)):,})</span>' for v, c in vcol.items()), unsafe_allow_html=True)
+
+            st.markdown("#### 📋 Building-by-building data")
+            show = st.radio("Show", ["Disagreements only", "All matched buildings"], horizontal=True,
+                            key="field_table_mode", label_visibility="collapsed")
+            tbl = dis if show.startswith("All") else dis[dis["verdict"] != "agree"]
+            tbl = tbl.assign(building=tbl["uid"].str.slice(0, 10) + "…",
+                             model=tbl["pred_idx"].map(lambda i: DAMAGE_CLASSES[i]),
+                             conf=tbl["confidence"] * 100)
+            st.dataframe(tbl[["building", "model", "conf", "field_raw", "verdict", "dist_m", "lat", "lon"]],
+                         hide_index=True, width="stretch", height=min(38 + 35 * len(tbl), 420),
+                         column_config={
+                             "model": st.column_config.TextColumn("model says"),
+                             "conf": st.column_config.ProgressColumn("model confidence", min_value=0, max_value=100,
+                                                                     format="%.0f%%"),
+                             "field_raw": st.column_config.TextColumn("inspectors recorded"),
+                             "dist_m": st.column_config.NumberColumn("match distance (m)", format="%.1f"),
+                             "lat": st.column_config.NumberColumn(format="%.5f"),
+                             "lon": st.column_config.NumberColumn(format="%.5f")})
+            st.caption(f"{len(tbl):,} rows. Use the table's download button for a CSV. 'Agree' is judged on destroyed vs "
+                       f"not, the distinction a satellite can see; the 4-class confusion is in the matrices above.")
+
+        with st.expander("🗄️ The SQL behind this (spatial join + window function)"):
+            st.code(fieldcheck.MATCH_SQL.strip(), language="sql")
+            st.caption("Candidate pairs come from a small latitude/longitude box (served by the index "
+                       "field_inspections_geo_idx); ROW_NUMBER() OVER (PARTITION BY building ORDER BY distance) keeps "
+                       "the nearest inspection. Results are stored in field_matches and read through the views "
+                       "v_field_compare and v_field_vs_model.")
+            st.code("SELECT field_raw, pred_idx, COUNT(*) AS buildings\nFROM v_field_vs_model\n"
+                    "WHERE disaster = 'santa-rosa-wildfire' AND model_version = ?\nGROUP BY field_raw, pred_idx;",
+                    language="sql")
+        st.caption("Source: CAL FIRE Damage Inspection Program (DINS), public data; only damage level and location are "
+                   "stored. Mapping: No Damage → no-damage; Affected (1-10%) and Minor (10-25%) → minor; "
+                   "Major (25-50%) → major; Destroyed (>50%) → destroyed.")
+
 
 # ============================================================== TAB: Model quality
 with tab_quality:
