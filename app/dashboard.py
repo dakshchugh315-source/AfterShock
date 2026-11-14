@@ -447,6 +447,17 @@ with tab_map:
                                    "WHERE model_version = ? AND disaster = ?", (version, disaster)).fetchall()
         view_mode = st.radio("View", ["🏙️ 3D damage towers", "🛰️ 2D satellite"], horizontal=True,
                              label_visibility="collapsed", key="map_view_mode")
+        # A disaster spans tens of km, so the plain mean can land on an empty field. Both views open on
+        # the biggest hotspot, else on the ~1 km grid cell with the most major/destroyed predictions.
+        if len(shown):
+            if hotspot_rows:
+                top = max(hotspot_rows, key=lambda r: r[1])
+                c_lon, c_lat = float(top[2]), float(top[3])
+            else:
+                sev = shown[shown["pred_idx"] >= 2] if (shown["pred_idx"] >= 2).any() else shown
+                cell = sev.assign(gx=(sev["lon"] / 0.01).round(), gy=(sev["lat"] / 0.01).round()).groupby(["gx", "gy"])
+                members = cell.get_group(cell.size().idxmax())
+                c_lon, c_lat = float(members["lon"].mean()), float(members["lat"].mean())
         if len(shown) and view_mode.startswith("🏙️"):
             # One column per building: height and colour = predicted severity, so damaged blocks
             # stand out as "towers". Hotspots (DBSCAN) are translucent violet discs on the ground.
@@ -464,18 +475,7 @@ with tab_map:
                 layers.append(pdk.Layer("ScatterplotLayer", data=hs_deck, get_position=["lon", "lat"], get_radius=120,
                                         get_fill_color=[98, 80, 214, 45], get_line_color=[98, 80, 214, 220],
                                         stroked=True, line_width_min_pixels=2, pickable=False))
-            # A disaster spans tens of km, so the plain mean can land on an empty field. Open on the
-            # biggest hotspot, else on the ~1 km grid cell with the most major/destroyed predictions.
-            if hotspot_rows:
-                top = max(hotspot_rows, key=lambda r: r[1])
-                c_lon, c_lat = float(top[2]), float(top[3])
-            else:
-                sev = deck_df[deck_df["pred_idx"] >= 2] if (deck_df["pred_idx"] >= 2).any() else deck_df
-                cell = sev.assign(gx=(sev["lon"] / 0.01).round(), gy=(sev["lat"] / 0.01).round()).groupby(["gx", "gy"])
-                gx, gy = cell.size().idxmax()
-                members = cell.get_group((gx, gy))
-                c_lon, c_lat = float(members["lon"].mean()), float(members["lat"].mean())
-            view = pdk.ViewState(latitude=c_lat, longitude=c_lon, zoom=15, pitch=55, bearing=-25)
+            view =pdk.ViewState(latitude=c_lat, longitude=c_lon, zoom=15, pitch=55, bearing=-25)
             st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view, map_provider="carto", map_style="dark",
                                      tooltip={"html": "<b>{predicted}</b> · {conf_pct}% sure<br/>uncertainty {uncertainty}",
                                               "style": {"fontSize": "12px"}}),
@@ -483,7 +483,7 @@ with tab_map:
             st.caption("Drag to pan, right-drag (or Ctrl+drag) to rotate and tilt. Column height and colour = predicted "
                        "damage; violet discs = DBSCAN hotspots.")
         elif len(shown):
-            fmap = folium.Map(location=[shown["lat"].mean(), shown["lon"].mean()], zoom_start=17, tiles=None,
+            fmap = folium.Map(location=[c_lat, c_lon], zoom_start=17, tiles=None,
                                scrollWheelZoom=False)  # don't hijack the page's scroll - click the map to zoom instead
             folium.TileLayer(
                 tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -491,10 +491,31 @@ with tab_map:
             folium.TileLayer(
                 tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
                 attr="Esri", name="Labels", control=False, overlay=True).add_to(fmap)
+            # Outline every building's real footprint polygon (stored in buildings.footprint_wkt, lon/lat)
+            # in its predicted-damage colour, so the marks sit exactly on the roofs in the satellite image.
+            fp = dict(db.execute(
+                "SELECT b.uid, b.footprint_wkt FROM buildings b JOIN predictions p ON p.uid = b.uid "
+                "WHERE p.model_version = ? AND b.disaster = ?", (version, disaster)).fetchall())
+            features = []
             for r in shown.itertuples():
-                folium.CircleMarker(
-                    [r.lat, r.lon], radius=5, color="white", weight=1, fill=True, fill_color=COLORS[r.pred_idx], fill_opacity=0.9,
-                    popup=f"<b>{r.uid}</b><br>{r.predicted} ({r.confidence:.0%})<br>uncertainty {r.uncertainty:.2f}").add_to(fmap)
+                if fp.get(r.uid):
+                    features.append({"type": "Feature", "geometry": shapely_wkt.loads(fp[r.uid]).__geo_interface__,
+                                     "properties": {"damage": r.predicted, "sure": f"{r.confidence:.0%}",
+                                                    "uncertainty": f"{r.uncertainty:.2f}", "color": COLORS[r.pred_idx],
+                                                    "severe": int(r.pred_idx >= 2)}})
+                else:
+                    folium.CircleMarker([r.lat, r.lon], radius=5, color="white", weight=1, fill=True,
+                                        fill_color=COLORS[r.pred_idx], fill_opacity=0.9).add_to(fmap)
+            if features:
+                folium.GeoJson(
+                    {"type": "FeatureCollection", "features": features}, name="Buildings",
+                    style_function=lambda f: {"color": f["properties"]["color"], "weight": 3 if f["properties"]["severe"] else 2,
+                                              "fillColor": f["properties"]["color"],
+                                              "fillOpacity": 0.45 if f["properties"]["severe"] else 0.2},
+                    highlight_function=lambda f: {"weight": 5, "fillOpacity": 0.7},
+                    tooltip=folium.GeoJsonTooltip(fields=["damage", "sure", "uncertainty"],
+                                                  aliases=["Predicted", "Confidence", "Uncertainty"]),
+                ).add_to(fmap)
             for cid, n_b, lon, lat, mean_conf in hotspot_rows:
                 folium.Circle([lat, lon], radius=120, color=VIOLET, weight=3, fill=True, fill_color=VIOLET, fill_opacity=0.12,
                               tooltip=f"Hotspot {cid}: {n_b} severe buildings, {mean_conf:.0%} mean confidence").add_to(fmap)
@@ -517,8 +538,8 @@ with tab_map:
             st.dataframe(hs_df.style.format({"mean confidence": "{:.0%}", "lon": "{:.4f}", "lat": "{:.4f}"}),
                          hide_index=True, width="stretch", height=240)
         else:
-            st.info(f"No DBSCAN hotspots for {disaster} with this model — try a bigger disaster "
-                    f"(e.g. hurricane-harvey) from the sidebar.")
+            st.info(f"No DBSCAN hotspots stored for {disaster} with model `{version}`. Hotspots are mined only "
+                    f"for the final model; pick another disaster or model from the sidebar.")
         st.subheader("🗂️ Per-disaster breakdown")
         pd_rows = db.execute(
             "SELECT b.disaster, b.label, p.pred_idx FROM buildings b JOIN predictions p ON p.uid = b.uid "

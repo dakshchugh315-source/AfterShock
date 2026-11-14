@@ -13,6 +13,11 @@
 34. Glass KPI tiles tilt in 3D on hover; tab content fades in; gradient tab underline;
     `prefers-reduced-motion` turns all animation off. Plotly legends no longer overlap titles.
     Per-disaster table shows "3,403" instead of "3403.000000".
+36. **2D satellite view marks the damage on the roofs**: every building's real footprint polygon
+    (`buildings.footprint_wkt`, lon/lat) is outlined and filled in its predicted-damage colour
+    (one GeoJSON layer, hover shows class / confidence / uncertainty). Both map views now open on the
+    biggest hotspot or the most-damaged ~1 km cell, instead of the plain mean (which landed on a school
+    with no labelled buildings). The "no hotspots" message no longer suggests the disaster already selected.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 
