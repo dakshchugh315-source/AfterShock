@@ -67,6 +67,31 @@
     table, plain-language findings, twin synced 3D maps (model | inspectors, one camera, "highlight
     differences"), a building-by-building table (disagreements or all) and the SQL behind it.
 47. Per-disaster and hotspot tables sized to their rows (no empty filler rows); accuracy shown as bars.
+48. **Teacher-style audit fixes.** (a) The disaster summary block belonged to no tab, so it showed under EVERY tab:
+    now Overview only. (b) Header numbers added up rows of several models (15,760 "predictions" for 7,880 test
+    buildings): now for the final model only, and the model is named. (c) The leaderboard's #1 (`post_baseline`) had
+    no stored predictions, so the site's "final" disagreed with the leaderboard: its 7,880 test predictions are now
+    stored. (d) Grad-CAM came from a different network than the selected model without saying so: caption now names
+    the network and explains why. (e) "128px" and "20 MC passes" were hard-coded: now read from the run files.
+    (f) The probabilistic query opened with 0 results: it now centres on the densest confident severe predictions.
+    (g) "Roughly half are false alarms" was hard-coded and contradicted 76% precision: computed now. (h) Pilot
+    architecture group added to Overview; tables sized to their rows; shorter sidebar labels; "agreement" renamed
+    "test accuracy" with its definition.
+49. **Accuracy script, honest result on the strongest pilot model.** With post_baseline included, the candidate chosen
+    on validation is post_baseline + TTA + bias: val 0.795 (vs 0.767) but test 0.6656 vs 0.6658, accuracy 0.688 vs
+    0.681. The validation gain came from fitting the offsets on validation (mild overfitting) and does not carry to
+    test. Stored as `post_baseline_tta_bias`; its `arch` now names the chosen candidate. Hotspots mined for it (45).
+    Against CAL FIRE inspectors on the same 371 buildings: model 97.3%, xBD human labels 96.5% (destroyed vs not).
+50. **PostgreSQL 18 copy of the database** (`sql/postgres_schema.sql`, `scripts/setup_postgres.ps1`,
+    `scripts/load_postgres.py`): schema `aftershock` with PK/FK/CHECK/NOT NULL (incl. a CHECK that the 4
+    probabilities sum to 1), PL/pgSQL triggers (review queue built by the trigger on load: 12,408 rows, identical
+    to SQLite), SQL functions, all views, and an earthdistance GiST spatial index (PostGIS used automatically when
+    installed). `sql/demo_queries.sql`: 13 viva queries, all verified (constraint violations rejected, index ~1 ms
+    vs seq scan ~12 ms, trigger demo in a rolled-back transaction, LATERAL nearest-inspection join).
+51. **Image quality + "What changed?" panel** (display only): larger, contrast-stretched context crops, and a
+    brightness-normalised before/after difference heatmap with a change score inside the building vs its
+    surroundings (destroyed test houses ~1.6-3x their surroundings, undamaged ~0.8-1.4x). The caption warns that
+    misalignment between dates and shadows also show as change.
 35. Verified headless (AppTest: no exceptions on any tab/button) and by screenshots in Edge on the
     pilot DB. 9/9 tests pass. No model/metric/SQL code was changed.
 

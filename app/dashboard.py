@@ -15,9 +15,10 @@ import folium
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.ndimage import gaussian_filter
 import streamlit as st
 import torch
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from shapely import wkt as shapely_wkt
 from streamlit_folium import st_folium
 
@@ -61,7 +62,7 @@ def crisp(img: Image.Image, size: int = 480) -> Image.Image:
 
 
 @st.cache_data(show_spinner=False)
-def context_crop_with_outline(image_id: str, uid: str, pad: float = 3.0, size: int = 320):
+def context_crop_with_outline(image_id: str, uid: str, pad: float = 3.0, size: int = 560):
     """DISPLAY ONLY - a wider crop straight from the original xBD tile (not the 128px DB crop the
     model trains/predicts on), with the building's own polygon outlined in red, so a reviewer sees
     real surrounding context instead of a tiny image stretched to look bigger than it is.
@@ -88,11 +89,63 @@ def context_crop_with_outline(image_id: str, uid: str, pad: float = 3.0, size: i
         crop = img.crop(box)
         scale = size / max(crop.size)
         crop = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS)
+        # display enhancement only: stretch contrast (1% clip) and sharpen what upscaling softened
+        crop = ImageOps.autocontrast(crop, cutoff=1).filter(ImageFilter.UnsharpMask(radius=2, percent=90, threshold=2))
         draw = ImageDraw.Draw(crop)
         pts = [((x - box[0]) * scale, (y - box[1]) * scale) for x, y in poly.exterior.coords]
-        draw.line(pts + [pts[0]], fill=(220, 38, 38), width=3)
+        draw.line(pts + [pts[0]], fill=(255, 64, 64), width=4)
         panels.append(crop)
     return panels[0], panels[1]
+
+
+@st.cache_data(show_spinner=False)
+def change_view(image_id: str, uid: str, pad: float = 3.0, size: int = 560):
+    """DISPLAY ONLY - what changed between the pre and post tile around one building.
+    Both crops are brightness-normalised (mean/std), the per-pixel difference is smoothed and drawn as a
+    heatmap over the 'after' image. Returns (image, change inside the building, change in its surroundings),
+    both on the same 0-1 scale. Not used by the model."""
+    labels_path = DATA_DIR / "xbd" / "train" / "labels" / f"{image_id}_post_disaster.json"
+    images_dir = DATA_DIR / "xbd" / "train" / "images"
+    if not labels_path.exists():
+        return None
+    doc = json.loads(labels_path.read_text(encoding="utf-8"))
+    feat = next((f for f in doc.get("features", {}).get("xy", []) if f.get("properties", {}).get("uid") == uid), None)
+    pre_path, post_path = images_dir / f"{image_id}_pre_disaster.png", images_dir / f"{image_id}_post_disaster.png"
+    if feat is None or not (pre_path.exists() and post_path.exists()):
+        return None
+    poly = shapely_wkt.loads(feat["wkt"])
+    minx, miny, maxx, maxy = poly.bounds
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    half = max(maxx - minx, maxy - miny, 8) * (1 + pad) / 2
+    pre_img, post_img = Image.open(pre_path).convert("RGB"), Image.open(post_path).convert("RGB")
+    box = (int(max(cx - half, 0)), int(max(cy - half, 0)), int(min(cx + half, post_img.width)),
+           int(min(cy + half, post_img.height)))
+    a = np.asarray(pre_img.crop(box), dtype=np.float32)
+    b = np.asarray(post_img.crop(box), dtype=np.float32)
+    a = (a - a.mean((0, 1))) / (a.std((0, 1)) + 1e-6)   # removes overall brightness / colour shifts between dates
+    b = (b - b.mean((0, 1))) / (b.std((0, 1)) + 1e-6)
+    diff = np.sqrt(((a - b) ** 2).mean(2))
+    diff = gaussian_filter(diff, sigma=2)               # smooth pixel noise
+    diff = np.clip(diff / 3.0, 0, 1)                    # fixed scale, so buildings are comparable to each other
+    mask_img = Image.new("L", (box[2] - box[0], box[3] - box[1]), 0)
+    ImageDraw.Draw(mask_img).polygon([(x - box[0], y - box[1]) for x, y in poly.exterior.coords], fill=1)
+    mask = np.asarray(mask_img, dtype=bool)
+    inside = float(diff[mask].mean()) if mask.any() else 0.0
+    outside = float(diff[~mask].mean()) if (~mask).any() else 0.0
+    # heatmap: dark blue (no change) -> magenta -> orange -> yellow (strong change), blended over the after image
+    stops = np.array([[11, 18, 36], [126, 34, 206], [244, 63, 94], [251, 146, 60], [250, 204, 21]], dtype=np.float32)
+    pos = diff * (len(stops) - 1)
+    lo = np.floor(pos).astype(int).clip(0, len(stops) - 2)
+    frac = (pos - lo)[..., None]
+    heat = stops[lo] * (1 - frac) + stops[lo + 1] * frac
+    base = np.asarray(ImageOps.autocontrast(post_img.crop(box), cutoff=1), dtype=np.float32) * 0.8
+    alpha = np.clip((diff - 0.15) * 1.6, 0, 0.85)[..., None]   # little change -> the photo shows through
+    out = Image.fromarray((base * (1 - alpha) + heat * alpha).clip(0, 255).astype(np.uint8))
+    scale = size / max(out.size)
+    out = out.resize((round(out.width * scale), round(out.height * scale)), Image.LANCZOS)
+    pts = [((x - box[0]) * scale, (y - box[1]) * scale) for x, y in poly.exterior.coords]
+    ImageDraw.Draw(out).line(pts + [pts[0]], fill=(255, 255, 255), width=3)
+    return out, inside, outside
 
 
 def plotly_theme(fig: go.Figure, title: str) -> go.Figure:
@@ -315,12 +368,13 @@ def fieldcheck_radius(db_, disaster_):
     return r or 0.0
 
 
-def render_hero(stats=None):
+def render_hero(stats=None, model=None):
     """Header banner. `stats` = live COUNT(*)s from the database (None if no DB is configured)."""
     steps = [("🛰️", "Pre + post imagery"), ("🗄️", "SQL database"), ("🧠", "Siamese CNN"),
              ("🎲", "Probabilities + uncertainty"), ("🧑‍⚖️", "Human review")]
     flow = '<span class="as-arrow">→</span>'.join(f'<span class="as-step">{i} {t}</span>' for i, t in steps)
     stat_html = ""
+    model_txt = f" · numbers for the final model <code>{model}</code> (best validation macro-F1)" if model else ""
     if stats:
         stat_html = '<div class="as-stats">' + "".join(
             f'<div class="as-stat"><div class="as-stat-v">{v}</div><div class="as-stat-l">{l}</div></div>'
@@ -336,7 +390,7 @@ def render_hero(stats=None):
       satellite images building by building, stores every answer as probabilities in SQL, and sends the unsure ones to a person.</div>
     <div class="as-flow">{flow}</div>
     {stat_html}
-    <div class="as-foot">Data Management and AI Integration · Bennett University · Daksh Chugh</div>
+    <div class="as-foot">Data Management and AI Integration · Bennett University · Daksh Chugh{model_txt}</div>
   </div>
 </div>""", unsafe_allow_html=True)
 
@@ -358,19 +412,14 @@ def _count(sql):
         return None
 
 
-hero_stats = [(f"{n:,}", label) for n, label in [
-    (_count("SELECT COUNT(*) FROM buildings"), "buildings in the DB"),
-    (_count("SELECT COUNT(*) FROM predictions"), "probabilistic predictions"),
-    (_count("SELECT COUNT(*) FROM review_queue WHERE status = 'pending'"), "queued for human review"),
-    (_count("SELECT COUNT(*) FROM hotspots"), "damage hotspots mined"),
-] if n is not None]
-render_hero(hero_stats)
+hero_slot = st.container()  # filled below, once the final model is known
 
 # ---------------------------------------------------------------- architecture comparison
 # Only the controlled trio (same loss/epochs/data, architecture is the one thing that differs) -
 # other runs in runs/ (e.g. an older post_baseline with weighted-CE loss) are a different experiment
 # and would make "best architecture" a misleading, apples-to-oranges claim.
 RUN_GROUPS = {
+    "Pilot: 64px, 5 epochs, 3 disasters": ["small_post", "small_siamese", "small_siamese_fm"],
     "128px, 15 epochs": ["post_focal", "siamese_focal", "siamese_fm_focal"],
     "192px, 12 epochs": ["post_focal_192", "siamese_focal_192", "siamese_fm_focal_192"],
 }
@@ -421,16 +470,17 @@ with tab_overview:
         for col, html in zip(hc, [
             hero_tile(f"{total_buildings:,}", "buildings", BLUE),
             hero_tile(str(n_disasters), "disasters", ORANGE),
-            hero_tile(pretty(best_row), f"best by validation ({best_row})", AQUA),
+            hero_tile(pretty(best_row), f"best architecture in this experiment, by validation ({best_row})", AQUA),
             hero_tile(f"+{point_diff:.1f} pts", f"test macro-F1 vs {pretty(worst_row)} ({rel_lift:+.1f}% rel.)", VIOLET),
         ]):
             col.markdown(html, unsafe_allow_html=True)
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-    st.radio("Resolution", list(RUN_GROUPS) if not cmp_df.empty else ["128px, 15 epochs"],
-             index=list(RUN_GROUPS).index(active_group) if not cmp_df.empty else 0,
+    groups_present = [g for g in RUN_GROUPS if not cmp_df.empty and (cmp_df["resolution"] == g).any()] or [active_group]
+    st.radio("Experiment", groups_present,
+             index=groups_present.index(active_group) if active_group in groups_present else 0,
              key="active_group_radio", horizontal=True,
-             help="192px results appear here as each 192px run finishes.")
+             help="Each group trains the three architectures with the same settings; only the architecture differs.")
     group_df = cmp_df[cmp_df["resolution"] == st.session_state.active_group_radio] if not cmp_df.empty else cmp_df
 
     # Same architecture, only the crop resolution changed - the direct answer to "does more pixels help?"
@@ -450,7 +500,7 @@ with tab_overview:
                     f"(95% CI {group_df.loc[only, 'macro F1 95% CI']}).")
         elif not group_df.empty:
             best_row, worst_row, point_diff, rel_lift = lift(group_df)
-            bc1, bc2 = st.columns([3, 2])
+            bc1, bc2 = st.columns([1, 1])
             with bc1:
                 fig = go.Figure()
                 for metric, color in [("val macro F1", BLUE), ("test macro F1", ORANGE), ("recall (destroyed)", AQUA)]:
@@ -463,7 +513,7 @@ with tab_overview:
                 show_cols = ["val macro F1", "test macro F1", "macro F1 95% CI", "accuracy"]
                 st.dataframe(group_df[show_cols].style.format(
                     {"val macro F1": "{:.3f}", "test macro F1": "{:.3f}", "accuracy": "{:.3f}"}
-                ).highlight_max(subset=["val macro F1"], color=f"{AQUA}30"), width="stretch", height=360)
+                ).highlight_max(subset=["val macro F1"], color=f"{AQUA}30"), width="stretch", height=38 + 35 * len(group_df))
             st.success(f"🏆 Chosen by **validation** macro-F1 (not test - that would be the model peeking at its own "
                        f"exam answers): **{best_row}** ({group_df.loc[best_row, 'architecture']}), "
                        f"**+{point_diff:.1f} percentage points** test macro-F1 over the weakest architecture tried "
@@ -482,10 +532,11 @@ with tab_overview:
                     f"so recall-on-destroyed is arguably the number that matters most here — and the overall-best "
                     f"model is **not** the best on it.")
             precisions = group_df["precision (destroyed)"]
-            st.info(f"📎 **Destroyed-class precision is weak across the board** ({', '.join(f'{m} {p:.0%}' for m, p in precisions.items())}) "
-                    f"— roughly half of what every model flags as 'destroyed' is a false alarm. That's exactly what the "
-                    f"MC-Dropout uncertainty routing (Probabilistic DB tab) is for: send the unsure ones to a human "
-                    f"instead of trusting the raw class label.")
+            plist = ", ".join(f"{m} {p:.0%}" for m, p in precisions.items())
+            false_share = 1 - precisions.min()
+            st.info(f"📎 **Destroyed-class precision:** {plist}. For the weakest model, {false_share:.0%} of its "
+                    f"'destroyed' calls are false alarms. The MC-Dropout uncertainty routing (Probabilistic DB tab) "
+                    f"exists for this: unsure calls go to a person instead of being trusted as they are.")
         else:
             st.info("Train post / siamese / siamese_fm first to populate this comparison.")
 
@@ -504,17 +555,53 @@ final_version = max(val_scores, key=val_scores.get) if val_scores else versions[
 # the best single network (by validation macro-F1) that has a checkpoint.
 _nets = [v for v in sorted(val_scores, key=val_scores.get, reverse=True) if (Path(RUNS_DIR) / v / "best.pt").exists()]
 net_version = _nets[0] if _nets else final_version
+
+
+def prob_source(v):
+    """How the stored probabilities of model v were made, from runs/<v>/metrics.json or mc_test.json."""
+    run = Path(RUNS_DIR) / v
+    try:
+        m = json.loads((run / "metrics.json").read_text())
+        if "chosen" in m:  # result of scripts/improve_model.py
+            return f"{m['chosen']}, {m.get('passes', '?')} MC-Dropout passes per model"
+        mc = run / "mc_test.json"
+        if mc.exists():
+            return f"mean of {json.loads(mc.read_text()).get('passes', 20)} MC-Dropout passes"
+    except Exception:
+        pass
+    return "MC-Dropout"
+
+
+def _count_p(sql, params):
+    try:
+        return db.execute(sql, params).fetchone()[0]
+    except Exception:  # table not installed on this database
+        return None
+
+
+# Header numbers are for the FINAL model only (adding rows of several models would double-count buildings).
+hero_stats = [(f"{n:,}", label) for n, label in [
+    (_count("SELECT COUNT(*) FROM buildings"), "buildings in the DB"),
+    (_count_p("SELECT COUNT(*) FROM predictions WHERE model_version = ?", (final_version,)),
+     "test buildings scored with probabilities"),
+    (_count_p("SELECT COUNT(*) FROM review_queue WHERE status = 'pending' AND model_version = ?", (final_version,)),
+     "queued for human review (DB trigger)"),
+    (_count_p("SELECT COUNT(*) FROM hotspots WHERE model_version = ?", (final_version,)), "damage hotspots (DBSCAN)"),
+] if n is not None]
+with hero_slot:
+    render_hero(hero_stats, final_version)
 st.sidebar.markdown("""<div class="as-brand"><div class="as-brand-logo">🛰️</div>
 <div><div class="as-brand-name">AfterShock</div><div class="as-brand-sub">Damage control panel</div></div></div>
 <div class="as-side-label">Model &amp; area</div>""", unsafe_allow_html=True)
-version = st.sidebar.selectbox("Model (for map / queries / explanations below)", versions,
+version = st.sidebar.selectbox("Model", versions, help="Used by every tab. '(final)' = best validation macro-F1.",
                                index=versions.index(final_version), format_func=lambda v: f"{v} (final)" if v == final_version else v)
 disasters = [r[0] for r in db.execute("SELECT DISTINCT disaster FROM buildings").fetchall()]
 default_disaster = next((d for d in PREFERRED_DEFAULT_DISASTERS if d in disasters), disasters[0] if disasters else None)
 disaster = st.sidebar.selectbox("Disaster", disasters, index=disasters.index(default_disaster) if default_disaster in disasters else 0)
 st.sidebar.markdown('<div class="as-side-label">Filters</div>', unsafe_allow_html=True)
 min_conf = st.sidebar.slider("Minimum confidence on map", 0.0, 1.0, 0.0, 0.05)
-review_threshold = st.sidebar.slider("Send to human review if uncertainty ≥", 0.0, 1.0, 0.6, 0.05)
+review_threshold = st.sidebar.slider("Review if uncertainty ≥", 0.0, 1.0, 0.6, 0.05,
+                                     help="Buildings at or above this MC-Dropout uncertainty go to a person.")
 
 df = pd.DataFrame(db.execute(
     "SELECT b.uid, b.lon, b.lat, b.label, b.split, b.image_id, p.pred_idx, p.confidence, p.uncertainty FROM buildings b "
@@ -523,19 +610,21 @@ df = pd.DataFrame(db.execute(
 df["predicted"] = df["pred_idx"].map(lambda i: DAMAGE_CLASSES[i])
 df_test = df[df["split"] == "test"]  # the only split that's honest to score agreement on
 
-st.markdown(f"#### {disaster.replace('-', ' ').title()} · model `{version}`")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Buildings", f"{len(df):,}")
-c2.metric("Major / destroyed", f"{int(df['pred_idx'].isin([2, 3]).sum()):,}")
-c3.metric("To human review", f"{int((df['uncertainty'] >= review_threshold).sum()):,}")
-c4.metric("Test agreement", f"{(df_test['predicted'] == df_test['true_label']).mean():.0%}" if len(df_test) else "–",
-          help="Computed on test-split buildings only - the model never trained on these, so this isn't inflated "
-               "by buildings it has already memorised.")
+with tab_overview:
+    st.markdown(f"#### {disaster.replace('-', ' ').title()} · model `{version}`")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Test buildings scored", f"{len(df):,}")
+    c2.metric("Predicted major / destroyed", f"{int(df['pred_idx'].isin([2, 3]).sum()):,}")
+    c3.metric("To human review", f"{int((df['uncertainty'] >= review_threshold).sum()):,}",
+              help=f"uncertainty ≥ {review_threshold:.2f} (sidebar)")
+    c4.metric("Test accuracy", f"{(df_test['predicted'] == df_test['true_label']).mean():.0%}" if len(df_test) else "–",
+              help="Share of test buildings whose predicted class equals the xBD label. Test split only: the model "
+                   "never trained on these buildings.")
 
 if df.empty:
     n_total = db.execute("SELECT COUNT(*) FROM buildings WHERE disaster = ?", (disaster,)).fetchone()[0]
     n_test = db.execute("SELECT COUNT(*) FROM buildings WHERE disaster = ? AND split = 'test'", (disaster,)).fetchone()[0]
-    st.warning(
+    tab_overview.warning(
         f"**No predictions to show for {disaster.replace('-', ' ').title()}.** This disaster has "
         f"{n_total} buildings total, but the deterministic train/val/test split (hashed per tile, so "
         f"neighbouring buildings never leak across splits) happened to put **{n_test} of them in the test "
@@ -672,7 +761,7 @@ with tab_explain:
                 "uncertainty": st.column_config.NumberColumn("uncert.", format="%.2f", width="small"),
             })
         st.caption("Most uncertain first. Confidence = the model's top probability; uncertainty = normalised entropy of the "
-                   "mean of 20 MC-Dropout passes (0 = sure, 1 = no idea). Pick a building below to inspect it.")
+                   f"stored probabilities ({prob_source(version)}); 0 = sure, 1 = no idea. Pick a building below to inspect it.")
         pick_from = queue["uid"].tolist() + df.sort_values("confidence")["uid"].tolist()[:50]
         uid = st.selectbox("Building (uncertain ones first)", pick_from, format_func=lambda u: u[:8] + "…")
     with right:
@@ -718,7 +807,7 @@ with tab_explain:
                                         textposition="outside", hovertemplate="%{y}: %{x:.1%}<extra></extra>"))
                 figp.update_layout(height=200, xaxis_range=[0, 1.12], xaxis_tickformat=".0%", showlegend=False)
                 figp.update_yaxes(autorange="reversed")
-                st.plotly_chart(plotly_theme(figp, "Stored probabilities (mean of 20 MC-Dropout passes)"),
+                st.plotly_chart(plotly_theme(figp, f"Stored probabilities · {prob_source(version)}"),
                                 width="stretch", config={"displayModeBar": False})
             image_id_row = df.loc[df["uid"] == uid, "image_id"]
             context = context_crop_with_outline(image_id_row.iloc[0], uid) if len(image_id_row) else None
@@ -727,10 +816,32 @@ with tab_explain:
                 ca, cb = st.columns(2)
                 ca.image(context[0], caption="Before", width="stretch")
                 cb.image(context[1], caption="After", width="stretch")
-                st.caption("xBD imagery is ~0.5–0.8 m/pixel, so a house is only ~25 pixels wide — this wider crop is "
-                           "for a human reviewer's context, not what the model is shown.")
-            st.markdown("**What the model sees** (128px input crop)")
+                st.caption("xBD imagery is ~0.5–0.8 m/pixel, so a house is only ~25 pixels wide. This wider crop "
+                           "(contrast-stretched for display) is for a human reviewer, not what the model is shown.")
+                cv = change_view(image_id_row.iloc[0], uid)
+                if cv:
+                    cimg, c_in, c_out = cv
+                    ratio = c_in / max(c_out, 1e-6)
+                    verdict_txt = ("clearly more than its surroundings" if ratio >= 1.5 else
+                                   "about the same as its surroundings" if ratio >= 0.8 else "less than its surroundings")
+                    flood = any(k in disaster for k in ("hurricane", "flood", "tsunami"))
+                    cc1, cc2 = st.columns(2)
+                    cc1.image(cimg, caption="What changed (yellow = strong change)", width="stretch")
+                    cc2.markdown(f"**What changed?**\n\nInside the building (white outline): **{c_in:.2f}**  \n"
+                                 f"Surroundings: **{c_out:.2f}**  \n(0 = identical, 1 = completely different)\n\n"
+                                 f"→ the building changed **{verdict_txt}**.")
+                    cc2.caption("Display aid only, not used by the model. Both photos are brightness-normalised first; "
+                                "a small misalignment between the two dates, shadows and season also show up as change."
+                                + (" Flood damage is mostly inside the house, so a roof can look unchanged from above; "
+                                   "such buildings are exactly the ones the model is unsure about." if flood else ""))
             pre_png, post_png = db.crop_bytes(uid)
+            net_for_cam = version if (Path(RUNS_DIR) / version / "best.pt").exists() else net_version
+            try:
+                net_px = json.loads((Path(RUNS_DIR) / net_for_cam / "metrics.json").read_text()).get("img_size", "?")
+            except Exception:
+                net_px = "?"
+            st.markdown(f"**What the model sees** (stored {Image.open(io.BytesIO(pre_png)).width} px crop, "
+                        f"resized to {net_px} px for `{net_for_cam}`)")
             a, b = st.columns(2)
             a.image(crisp(Image.open(io.BytesIO(pre_png))), caption="Before", width="stretch")
             b.image(crisp(Image.open(io.BytesIO(post_png))), caption="After", width="stretch")
@@ -741,8 +852,13 @@ with tab_explain:
             elif ckpt_path.exists():
                 with st.spinner("Computing Grad-CAM for this building (not in the precomputed batch)…"):
                     panel, pred, conf = live_gradcam(str(ckpt_path), db, uid)
-                st.image(crisp(panel, size=960), caption=f"Grad-CAM (live): before | after | heatmap — "
-                                                          f"predicted {pred} ({conf:.0%})", width="stretch")
+                st.image(crisp(panel, size=960), caption=f"Grad-CAM (live) of network {net_for_cam}: before | after | "
+                                                          f"heatmap — this network alone predicts {pred} ({conf:.0%})",
+                         width="stretch")
+                if net_for_cam != version:
+                    st.caption(f"`{version}` combines several networks, and Grad-CAM needs a single network, so the "
+                               f"heatmap is from `{net_for_cam}` (its best member by validation). Its own prediction can "
+                               f"differ from the combined verdict above.")
             else:
                 st.caption("No checkpoint available to compute Grad-CAM for this model.")
 
@@ -813,11 +929,19 @@ with tab_prob:
         # empty-looking) building - an empty-by-default panel reads as broken, not "try the sliders".
         hotspots_here = db.execute("SELECT lon, lat FROM hotspots WHERE model_version = ? AND disaster = ? "
                                     "ORDER BY n_buildings DESC LIMIT 1", (version, disaster)).fetchone()
+        # Default class: the severe class (destroyed, else major) with the most confident (>= 0.5) predictions here.
+        sure = df_test[(df_test["confidence"] >= 0.5) & df_test["lon"].notna()]
+        default_cls = next((c for c in (3, 2) if (sure["pred_idx"] == c).sum() >= 5), 3)
         if hotspots_here:
-            d2 = (all_test_buildings["lon"] - hotspots_here[0]) ** 2 + (all_test_buildings["lat"] - hotspots_here[1]) ** 2
-            default_uid = all_test_buildings.loc[d2.idxmin(), "uid"]
-        else:
-            default_uid = all_test_buildings["uid"].iloc[0]
+            cx, cy = hotspots_here
+        else:  # densest ~500 m cell of confident predictions of that class
+            pool = sure[sure["pred_idx"] == default_cls]
+            pool = pool if len(pool) else all_test_buildings
+            cells = pool.groupby([(pool["lon"] / 0.005).round(), (pool["lat"] / 0.005).round()])
+            g = cells.get_group(cells.size().idxmax())
+            cx, cy = g["lon"].mean(), g["lat"].mean()
+        d2 = (all_test_buildings["lon"] - cx) ** 2 + (all_test_buildings["lat"] - cy) ** 2
+        default_uid = all_test_buildings.loc[d2.idxmin(), "uid"]
         uid_list = all_test_buildings["uid"].tolist()
         qcol1, qcol2, qcol3 = st.columns(3)
         with qcol1:
@@ -826,7 +950,7 @@ with tab_prob:
         with qcol2:
             radius_m = st.slider("Radius (metres)", 50, 3000, 500, 50)
         with qcol3:
-            class_filter = st.selectbox("Damage class", ["(any)"] + DAMAGE_CLASSES, index=4)
+            class_filter = st.selectbox("Damage class", ["(any)"] + DAMAGE_CLASSES, index=1 + default_cls)
         min_q_conf = st.slider("Minimum confidence", 0.0, 1.0, 0.5, 0.05,
                                 help="Starts at 0.5 so the default query isn't empty - raise it to see precision drop off.")
         center = all_test_buildings[all_test_buildings["uid"] == center_uid].iloc[0]
@@ -927,7 +1051,8 @@ with tab_sql:
         st.warning("The SQL/AI layer isn't installed in this database yet: run `python -m aftershock.sqlai --install`.")
     else:
         st.subheader("Schema")
-        st.dataframe(schema_overview(db_url), hide_index=True, width="stretch",
+        schema_df = schema_overview(db_url)
+        st.dataframe(schema_df, hide_index=True, width="stretch", height=38 + 35 * len(schema_df),
                      column_config={"rows": st.column_config.NumberColumn(format="localized"),
                                     "keys / constraints": st.column_config.TextColumn(width="large")})
 
@@ -1193,7 +1318,7 @@ with tab_quality:
                 st.plotly_chart(plotly_theme(fig2, "Per-class precision / recall / F1 (test)"), width="stretch",
                                  config={"displayModeBar": False})
             with mc2:
-                st.dataframe(pc, width="stretch", height=340)
+                st.dataframe(pc, width="stretch", height=38 + 35 * len(pc))
             lo, hi = bootstrap_macro_f1_ci(m["confusion_matrix"])
             st.caption(f"Macro F1 {m['macro_f1']:.3f} (95% CI [{lo:.3f}, {hi:.3f}]) · harmonic F1 {m['harmonic_f1']:.3f} "
                        f"· accuracy {m['accuracy']:.3f}")

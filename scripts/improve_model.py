@@ -152,7 +152,8 @@ def main(argv=None):
     p_final = apply_bias(best["pt"], best["bias"])
     pred, unc = p_final.argmax(1), predictive_entropy(p_final)
     first = load_checkpoint(a.ckpt[0], "cpu")[1]
-    metrics = {"arch": "ensemble/tta/bias over: " + ", ".join(Path(c).parent.name for c in a.ckpt),
+    metrics = {"arch": best["name"].replace(" +", " + ").replace("+TTA", "TTA").replace("+bias", "bias"),
+               "candidates_tried": [Path(c).parent.name for c in a.ckpt],
                "chosen": best["name"], "bias": best["bias"].tolist(), "img_size": first["img_size"],
                "model_version": a.name, "loss": "n/a (no retraining)", "best_val_macro_f1": best["val"],
                "test": best["test_metrics"], "selective_test": selective_accuracy(y_test, pred, unc),
