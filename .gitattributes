@@ -2,3 +2,5 @@
 hf/Dockerfile text eol=lf
 *.jpg binary
 *.png binary
+packages.txt text eol=lf
+app/requirements.txt text eol=lf
