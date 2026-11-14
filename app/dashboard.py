@@ -16,6 +16,7 @@ import folium
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pydeck as pdk
 import streamlit as st
 from shapely import wkt as shapely_wkt
 from streamlit_folium import st_folium
@@ -57,6 +58,14 @@ INK_MUTED, GRID = "#94a0c2", "#1f2a44"  # tuned for the dark theme in .streamlit
 PREFERRED_DEFAULT_DISASTERS = ["hurricane-harvey", "hurricane-michael", "socal-fire"]
 
 
+# Plotly toolbar on every chart: zoom in (+), zoom out (-), reset, pan, save as PNG. Double-click also resets.
+PLOTLY_CFG = {"displaylogo": False, "displayModeBar": True, "scrollZoom": False,
+              "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toggleSpikelines",
+                                         "hoverClosestCartesian", "hoverCompareCartesian", "hoverClosest3d",
+                                         "tableRotation"],
+              "toImageButtonOptions": {"format": "png", "scale": 2}}
+
+
 def plotly_theme(fig: go.Figure, title: str) -> go.Figure:
     fig.update_layout(
         title=dict(text=title, font=dict(size=14, family="system-ui, -apple-system, 'Segoe UI', sans-serif")),
@@ -65,6 +74,7 @@ def plotly_theme(fig: go.Figure, title: str) -> go.Figure:
         margin=dict(l=10, r=10, t=76, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hoverlabel=dict(font=dict(family="system-ui, sans-serif")),
+        modebar=dict(bgcolor="rgba(11,18,36,0.85)", color="#94a0c2", activecolor=ACCENT, orientation="h"),
     )
     fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID)
     fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID)
@@ -156,6 +166,11 @@ h2, h3, h4 {{font-weight: 700 !important;}}
         #070b18;
 }}
 header[data-testid="stHeader"] {{background: transparent;}}
+/* leaving a fullscreen chart/table returns keyboard focus to the main scroll area; hide its focus ring */
+section[data-testid="stMain"]:focus, section[data-testid="stMain"]:focus-visible,
+[data-testid="stAppViewContainer"]:focus, [data-testid="stAppViewContainer"]:focus-visible,
+[data-testid="stMainBlockContainer"]:focus, [data-testid="stMainBlockContainer"]:focus-visible {{outline:none !important;}}
+.modebar-btn path {{fill:#94a0c2 !important;}} .modebar-btn:hover path, .modebar-btn.active path {{fill:{ACCENT} !important;}}
 section[data-testid="stSidebar"] {{
     background: linear-gradient(180deg, #0c1530, #070b18) !important;
     border-right: 1px solid #1f2a44;
@@ -317,7 +332,6 @@ def render_hero(stats=None, model=None):
              ("🎲", "Probabilities + uncertainty"), ("🧑‍⚖️", "Human review")]
     flow = '<span class="as-arrow">→</span>'.join(f'<span class="as-step">{i} {t}</span>' for i, t in steps)
     stat_html = ""
-    model_txt = f" · numbers for the final model <code>{model}</code> (best validation macro-F1)" if model else ""
     if stats:
         stat_html = '<div class="as-stats">' + "".join(
             f'<div class="as-stat"><div class="as-stat-v">{v}</div><div class="as-stat-l">{l}</div></div>'
@@ -450,7 +464,7 @@ with tab_overview:
                                 marker_line_width=0, hovertemplate=f"<b>%{{x}}</b><br>{metric}: %{{y:.3f}}<extra></extra>")
                 fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.08, yaxis_range=[0, 1], height=360)
                 st.plotly_chart(plotly_theme(fig, "Validation & test metrics by architecture"), width="stretch",
-                                 config={"displayModeBar": False})
+                                 config=PLOTLY_CFG)
             with bc2:
                 show_cols = ["val macro F1", "test macro F1", "macro F1 95% CI", "accuracy"]
                 st.dataframe(group_df[show_cols].style.format(
@@ -632,7 +646,7 @@ with tab_map:
         shown = df[(df["confidence"] >= min_conf) & df["lon"].notna()]
         hotspot_rows = db.execute("SELECT cluster_id, n_buildings, lon, lat, mean_confidence FROM hotspots "
                                    "WHERE model_version = ? AND disaster = ?", (version, disaster)).fetchall()
-        view_mode = st.radio("View", ["🏙️ 3D city", "🛰️ 2D satellite"], horizontal=True,
+        view_mode = st.radio("View", ["🏙️ 3D city", "📊 Damage towers", "🛰️ 2D satellite"], horizontal=True,
                              label_visibility="collapsed", key="map_view_mode")
         # A disaster spans tens of km, so the plain mean can land on an empty field. Both views open on
         # the biggest hotspot, else on the ~1 km grid cell with the most major/destroyed predictions.
@@ -655,6 +669,31 @@ with tab_map:
             render_city3d(shown, fp, hotspot_rows, (c_lon, c_lat), disaster.replace("-", " ").title(), height=640)
             st.caption("Buildings rise from their real footprints; destroyed ones pulse red, DBSCAN hotspots are violet "
                        "rings. The camera orbits until you touch the map. Hover a building for its confidence.")
+        elif len(shown) and view_mode.startswith("📊"):
+            # Analysis view: one column per building. Height = damage class x confidence, so tall red columns are
+            # buildings the model is SURE are destroyed; DBSCAN hotspots are violet discs on the ground.
+            sev_rgb = {i: [int(COLORS[i][k:k + 2], 16) for k in (1, 3, 5)] for i in COLORS}
+            tw = shown[["uid", "lon", "lat", "pred_idx", "predicted", "confidence", "uncertainty"]].copy()
+            tw["height"] = tw["pred_idx"].map({0: 4, 1: 25, 2: 60, 3: 110}) * (0.5 + tw["confidence"])
+            tw["color"] = tw["pred_idx"].map(lambda i: sev_rgb[i] + [230])
+            tw["conf_pct"] = (tw["confidence"] * 100).round(0)
+            tw["uncertainty"] = tw["uncertainty"].round(2)
+            layers = [pdk.Layer("ColumnLayer", data=tw, get_position=["lon", "lat"], get_elevation="height",
+                                elevation_scale=1.5, radius=7, get_fill_color="color", pickable=True, extruded=True,
+                                auto_highlight=True)]
+            if hotspot_rows:
+                hs_deck = pd.DataFrame(hotspot_rows, columns=["cluster_id", "n_buildings", "lon", "lat", "mean_confidence"])
+                layers.append(pdk.Layer("ScatterplotLayer", data=hs_deck, get_position=["lon", "lat"], get_radius=120,
+                                        get_fill_color=[167, 139, 250, 45], get_line_color=[167, 139, 250, 220],
+                                        stroked=True, line_width_min_pixels=2))
+            st.pydeck_chart(pdk.Deck(layers=layers, map_provider="carto", map_style="dark",
+                                     initial_view_state=pdk.ViewState(latitude=c_lat, longitude=c_lon, zoom=15,
+                                                                      pitch=55, bearing=-25),
+                                     tooltip={"html": "<b>{predicted}</b> · {conf_pct}% sure<br/>uncertainty {uncertainty}",
+                                              "style": {"fontSize": "12px"}}), height=600)
+            st.caption("Column height = damage class × confidence; colour = predicted class. Tall red columns are "
+                       "buildings the model is sure are destroyed. Drag to pan, right-drag (or Ctrl+drag) to tilt and "
+                       "rotate, scroll to zoom. Violet discs = DBSCAN hotspots.")
         elif len(shown):
             fmap = folium.Map(location=[c_lat, c_lon], zoom_start=17, tiles=None,
                                scrollWheelZoom=False)  # don't hijack the page's scroll - click the map to zoom instead
@@ -800,7 +839,7 @@ with tab_explain:
                 figp.update_layout(height=200, xaxis_range=[0, 1.12], xaxis_tickformat=".0%", showlegend=False)
                 figp.update_yaxes(autorange="reversed")
                 st.plotly_chart(plotly_theme(figp, f"Stored probabilities · {prob_source(version)}"),
-                                width="stretch", config={"displayModeBar": False})
+                                width="stretch", config=PLOTLY_CFG)
 
     if uid:
         image_id_row = df.loc[df["uid"] == uid, "image_id"]
@@ -886,7 +925,7 @@ with tab_prob:
         fig3.update_layout(xaxis_title="mean predicted confidence", yaxis_title="observed accuracy",
                             xaxis_range=[0.4, 1], yaxis_range=[0.4, 1], height=380)
         st.plotly_chart(plotly_theme(fig3, "Reliability diagram (test split)"), width="stretch",
-                         config={"displayModeBar": False})
+                         config=PLOTLY_CFG)
         st.caption("Points below the dashed line mean the model is over-confident in that bucket (says e.g. 90% sure, "
                    "right less often than 90%) - exactly what MC-Dropout uncertainty is meant to catch downstream.")
     else:
@@ -918,7 +957,7 @@ with tab_prob:
                                        zaxis=dict(title="p_destroyed", **axis), aspectmode="cube",
                                        camera=dict(eye=dict(x=1.25, y=1.1, z=0.75))))
         st.plotly_chart(plotly_theme(fig3d, f"Stored class probabilities, {len(pdf3):,} test buildings"),
-                        width="stretch", config={"displayModeBar": False})
+                        width="stretch", config=PLOTLY_CFG)
     else:
         st.info("No test-split predictions for this disaster with this model.")
 
@@ -1255,11 +1294,11 @@ with tab_real:
         c1, c2 = st.columns(2)
         if mv["n"]:
             c1.plotly_chart(cm_fig(mv["confusion_field_rows"], f"Model ({version}) vs inspectors · {mv['n']:,} test buildings",
-                                   "model"), width="stretch", config={"displayModeBar": False})
+                                   "model"), width="stretch", config=PLOTLY_CFG)
         else:
             c1.info("Pick a model with test predictions for this disaster in the sidebar.")
         c2.plotly_chart(cm_fig(xv["confusion_field_rows"], f"xBD labels vs inspectors · same {xv['n']:,} buildings",
-                               "xBD label"), width="stretch", config={"displayModeBar": False})
+                               "xBD label"), width="stretch", config=PLOTLY_CFG)
         if mv["n"]:
             comp = pd.DataFrame([
                 {"compared with inspectors": f"Model ({version})", "buildings": mv["n"],
@@ -1396,7 +1435,7 @@ with tab_quality:
             figc.update_layout(height=380, xaxis_title="predicted", yaxis_title="true (xBD label)")
             figc.update_yaxes(autorange="reversed")
             st.plotly_chart(plotly_theme(figc, "Confusion matrix (row % = recall)"), width="stretch",
-                            config={"displayModeBar": False})
+                            config=PLOTLY_CFG)
         with g2:
             pc = pd.DataFrame(m["per_class"]).T
             figb = go.Figure()
@@ -1405,7 +1444,7 @@ with tab_quality:
                              hovertemplate=f"<b>%{{x}}</b><br>{metric}: %{{y:.3f}}<extra></extra>")
             figb.update_layout(barmode="group", bargap=0.25, bargroupgap=0.08, yaxis_range=[0, 1], height=380)
             st.plotly_chart(plotly_theme(figb, "Per-class precision / recall / F1"), width="stretch",
-                            config={"displayModeBar": False})
+                            config=PLOTLY_CFG)
 
         # Coverage vs accuracy from the stored probabilities: the payoff of storing uncertainty in the database
         sel = pd.DataFrame(db.execute(
@@ -1431,7 +1470,7 @@ with tab_quality:
                                    xaxis_title="share of test buildings the model answers (most certain first)",
                                    yaxis_title="accuracy on those", showlegend=False)
                 st.plotly_chart(plotly_theme(figs, "Selective prediction: certainty buys accuracy"), width="stretch",
-                                config={"displayModeBar": False})
+                                config=PLOTLY_CFG)
         with s2:
             if len(sel):
                 half = acc_curve[max(int(round(0.5 * len(sel))) - 1, 0)]
