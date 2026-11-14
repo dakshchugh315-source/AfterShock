@@ -21,11 +21,14 @@ def gradcam(model, pre: torch.Tensor, post: torch.Tensor, target: int | None = N
     pre/post: [3,H,W] normalised tensors. Returns (cam HxW in 0..1, predicted class, probabilities)."""
     model.eval()
     pre, post = pre[None], post[None]
-    with torch.no_grad():
-        f_pre = encoder_features(model.encoder, pre)[1]
-    act, f_post = encoder_features(model.encoder, post)
+    if hasattr(model, "fused_forward"):      # siamese_fm: Grad-CAM on the fused (change) feature map
+        act, logits = model.fused_forward(pre, post)
+    else:
+        with torch.no_grad():
+            f_pre = encoder_features(model.encoder, pre)[1]
+        act, f_post = encoder_features(model.encoder, post)
+        logits = model.classify(f_pre, f_post)
     act.retain_grad()
-    logits = model.classify(f_pre, f_post)
     probs = torch.softmax(logits, 1)[0].detach()
     target = int(probs.argmax()) if target is None else target
     model.zero_grad()

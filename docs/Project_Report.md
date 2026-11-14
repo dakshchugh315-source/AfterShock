@@ -47,7 +47,22 @@ Topic 5's time-series forecasting part is not used; only its XAI part is.
 | Coverage | ~45,000 km², 19 disasters (earthquakes, floods, hurricanes, wildfires, etc.) |
 | Labels | Joint Damage Scale: no damage, minor damage, major damage, destroyed |
 
-**Scope for this project:** a subset of 2–3 disasters, to keep training feasible on free GPUs (Google Colab / Kaggle). The subset is fixed before training and documented in the final report.
+**Scope used in this project:** all 10 disasters available in the downloaded xBD train set: 1,715 tiles and 107,441 labelled buildings. The split is made per tile (hashed), so neighbouring buildings never leak between splits. Train has 74,597 buildings, validation 17,032 and test 15,812.
+
+| Disaster | Buildings | | Label | Buildings |
+| --- | --- | --- | --- | --- |
+| mexico-earthquake | 32,196 | | no-damage | 75,496 |
+| hurricane-harvey | 22,725 | | minor-damage | 14,818 |
+| hurricane-michael | 22,454 | | major-damage | 13,498 |
+| hurricane-matthew | 13,155 | | destroyed | 3,629 |
+| midwest-flooding | 8,471 | | | |
+| hurricane-florence | 6,120 | | | |
+| palu-tsunami | 979 | | | |
+| guatemala-volcano | 682 | | | |
+| socal-fire | 423 | | | |
+| santa-rosa-wildfire | 236 | | | |
+
+The data is heavily imbalanced: only 3.4% of buildings are "destroyed". The hashed split also happened to put every palu-tsunami tile in train, so that disaster has no test buildings.
 
 ## 6. System Architecture
 
@@ -112,7 +127,7 @@ WHERE p.pred_idx = 3 AND p.p_destroyed >= 0.8
 | XAI / uncertainty | pytorch-grad-cam, LIME, MC Dropout |
 | Data mining | scikit-learn (DBSCAN), pandas |
 | Dashboard | Streamlit, Folium |
-| Compute / code | Google Colab or Kaggle GPU, Git + GitHub |
+| Compute / code | NVIDIA GeForce RTX 5070 Laptop GPU (8 GB), PyTorch 2.9.1 + CUDA 12.8; SQLite for the experiments (PostGIS schema in `sql/`); Git |
 
 ## 10. Evaluation
 
@@ -125,13 +140,80 @@ WHERE p.pred_idx = 3 AND p.p_destroyed >= 0.8
 | Selective accuracy vs coverage | Accuracy after routing uncertain buildings to humans |
 | Inference time per km² | Practical speed |
 
-**Results (to be filled after experiments):**
+### 10.1 Results
 
-| Model | Macro F1 | Recall (destroyed) | Notes |
+All three models were trained with the same settings: focal loss, 128×128 crops, 15 epochs, ImageNet-pretrained ResNet-18, and the same 74,597 training buildings. Only the architecture differs. **The final model was chosen by validation macro-F1.** The test set was used only once, for the numbers below. All numbers come from `runs/*/metrics.json`.
+
+| Model | Architecture | Val macro F1 | Test macro F1 | Test accuracy | Recall (destroyed) | Precision (destroyed) | Recall (major) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| post_focal | Post-only ResNet-18 (baseline) | 0.609 | 0.600 | 0.710 | **0.716** | 0.410 | 0.503 |
+| siamese_focal | Siamese, late fusion | 0.635 | 0.611 | 0.716 | 0.628 | 0.496 | 0.485 |
+| **siamese_fm_focal** | **Siamese, feature-map fusion** | **0.647** | **0.632** | **0.739** | 0.661 | **0.514** | **0.521** |
+
+**Findings:**
+- The feature-map fusion Siamese (`SiameseFMNet`) is best overall: **+3.2 percentage points** test macro-F1 over the post-only baseline (0.632 vs 0.600, +5.3% relative). It compares pre and post features at every spatial position before pooling, so it keeps *where* the change happened. The plain late-fusion Siamese only gains about 1 point over the baseline.
+- **Trade-off:** the post-only baseline has the highest recall on destroyed buildings (0.716 vs 0.661). For rescue, a missed collapse is the costliest error, so this result should not be hidden. The fusion model's advantage is fewer false alarms: destroyed precision is 0.514 vs 0.410.
+- Destroyed precision is low for every model (≤ 0.51): about half of the "destroyed" calls are wrong. This is why low-confidence predictions are sent to human review (10.2).
+- **Limitation:** each architecture was trained only once. Small gaps of 1–3 points could change on a re-run. The dashboard shows a bootstrap 95% interval from each test confusion matrix (about ±0.01 for macro-F1).
+
+### 10.2 Uncertainty: selective prediction with MC Dropout
+
+The best model was run 20 times per test building with dropout left on. Buildings are ranked by uncertainty, and the most uncertain ones are sent to a human (from `runs/siamese_fm_focal/mc_test.json`):
+
+| Coverage (kept by model) | Accuracy | Macro F1 | Buildings sent to human review |
 | --- | --- | --- | --- |
-| Baseline ResNet-18 (post only) | [ ] | [ ] | |
-| Siamese CNN | [ ] | [ ] | |
-| Siamese CNN + focal loss | [ ] | [ ] | |
+| 100% | 0.738 | 0.631 | 0 |
+| 95% | 0.757 | 0.654 | 791 |
+| 90% | 0.773 | 0.666 | 1,581 |
+| 80% | 0.801 | 0.680 | 3,162 |
+| 70% | 0.829 | 0.690 | 4,744 |
+| 50% | 0.886 | 0.700 | 7,906 |
+
+Accuracy goes up steadily as the most uncertain buildings are removed. This shows that the stored uncertainty value is meaningful: the model's least-sure predictions really are the ones most likely to be wrong.
+
+### 10.3 Per-disaster test accuracy (best model)
+
+| Disaster | Test buildings | Accuracy |
+| --- | --- | --- |
+| mexico-earthquake | 3,285 | 0.988 |
+| midwest-flooding | 1,313 | 0.944 |
+| guatemala-volcano | 168 | 0.935 |
+| hurricane-florence | 1,002 | 0.872 |
+| socal-fire | 88 | 0.875 |
+| hurricane-harvey | 3,403 | 0.713 |
+| hurricane-michael | 3,690 | 0.633 |
+| hurricane-matthew | 2,862 | 0.461 |
+
+The overall score hides large differences between disasters. Disasters made up mostly of undamaged buildings are easy. Hurricanes with mixed damage are much harder: hurricane-matthew is below 50%. (santa-rosa-wildfire has only 1 test building and palu-tsunami has none, so they are left out.)
+
+### 10.4 Hotspots
+
+DBSCAN on the predicted major/destroyed buildings found **37 hotspots containing 1,288 severe buildings**. These are shown on the dashboard map and listed per disaster.
+
+### 10.5 Does higher resolution help? (128 px vs 192 px, same architecture)
+
+The final architecture was retrained on 192×192 crops. The building data and split were the same. Because of time limits, it ran for 12 epochs instead of 15, with a batch size of 64.
+
+| Run | Crop | Epochs | Val macro F1 | Test macro F1 | Test accuracy | Recall (destroyed) | Precision (destroyed) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| siamese_fm_focal | 128 px | 15 | **0.647** | **0.632** | **0.739** | 0.661 | **0.514** |
+| siamese_fm_focal_192 | 192 px | 12 | 0.643 | 0.616 | 0.731 | 0.663 | 0.453 |
+
+**Higher resolution did not help in this setting.** The 192 px run is slightly worse on validation, so selection by validation keeps the 128 px model as final. Recall on destroyed buildings is unchanged, and destroyed precision is lower. Part of the gap may come from the shorter training (12 vs 15 epochs). The 192 px run's uncertainty ranking still works: accuracy rises from 0.731 at full coverage to 0.889 at 50% coverage.
+
+### 10.6 The database as part of the AI system (SQL layer)
+
+`src/aftershock/sqlai.py` adds an "AI inside the database" layer on top of the base schema. The live dashboard tab *Database & SQL* runs it read-only.
+
+- **Model registry** `model_runs`, with CHECK constraints. The view `v_model_leaderboard` ranks the runs with `RANK() OVER (ORDER BY val_macro_f1 DESC)`. Only runs evaluated on this database are registered. The earlier `post_baseline` run used a different, 3-disaster database and test split, so it is excluded.
+- **Trigger** `trg_queue_uncertain` (AFTER INSERT ON predictions). Every prediction with uncertainty ≥ 0.5 or confidence < 0.6 is automatically added to `review_queue`, which holds 17,251 rows for the two models with stored predictions.
+- **Probabilistic views.**
+  - `v_disaster_damage` puts the *expected* number of destroyed buildings (the sum of P(destroyed)) next to the hard count.
+  - `v_calibration` gives a reliability table.
+  - `v_uncertainty_rank` uses `ROW_NUMBER()` to compute selective accuracy in SQL. It reproduces the Python results in 10.2 (0.886 / 0.801 / 0.738 at 50 / 80 / 100% coverage).
+- **Threshold query.** For the final model, 104 test buildings have P(destroyed) ≥ 0.8, and 97 of them really are destroyed (precision 0.933). The model's plain arg-max "destroyed" call has a precision of only 0.514. A confidence threshold in SQL makes the "destroyed" list much more reliable.
+- **Index vs full scan.** `SELECT COUNT(*) FROM buildings WHERE split='test'` uses `buildings_split_idx` (a covering index search) and takes about 0.3 ms. With `NOT INDEXED` it falls back to a full table scan of about 60 ms, roughly 190× slower. Timings were measured on the training laptop.
+- **In-database inference.** SQL functions `ai_predict()` and `ai_confidence()` run the final network on the PNG bytes stored in `crops`, directly inside a `SELECT`.
 
 ## 11. Expected Outcomes and Deliverables
 
@@ -152,7 +234,9 @@ WHERE p.pred_idx = 3 AND p.p_destroyed >= 0.8
 
 ## 13. Limitations and Ethics
 
-- Results on a 2–3 disaster subset may not generalise to unseen disaster types or regions.
+- Results are on 10 xBD disasters. They may not generalise to unseen disaster types or regions, and per-disaster accuracy varies widely (46%–99%, Section 10.3).
+- One training run per architecture, so small differences between models are not statistically certain.
+- The models see 128×128 crops of imagery at about 0.5–0.8 m/pixel, so a house is only about 25 pixels wide. A 192 px retrain of the final architecture did not improve results (Section 10.5), but it ran for 12 epochs instead of 15, so this comparison is not fully controlled.
 - Satellite resolution limits what can be seen: interior damage is invisible from above.
 - The system supports human decision-makers; it does not replace field assessment. Low-confidence predictions are explicitly sent for human review.
 - Only public, research-licensed data is used; no personal data is involved.

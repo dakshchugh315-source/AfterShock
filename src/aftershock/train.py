@@ -108,7 +108,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", default=DB_URL)
     ap.add_argument("--name", default="run")
-    ap.add_argument("--arch", choices=["siamese", "post"], default="siamese")
+    ap.add_argument("--arch", choices=["siamese", "siamese_fm", "post"], default="siamese")
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=3e-4)

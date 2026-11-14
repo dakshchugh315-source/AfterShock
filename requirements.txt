@@ -12,3 +12,5 @@ streamlit-folium
 pytest
 # optional: LIME cross-check for explanations
 # lime
+pydeck
+plotly

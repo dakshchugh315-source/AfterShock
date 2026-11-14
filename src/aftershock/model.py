@@ -40,6 +40,36 @@ class SiameseDamageNet(nn.Module):
         return self.classify(encoder_features(self.encoder, pre)[1], encoder_features(self.encoder, post)[1])
 
 
+class SiameseFMNet(nn.Module):
+    """Siamese with feature-map (mid-level) fusion.
+
+    The plain Siamese net pools each image to one vector before comparing, so it loses WHERE things changed.
+    Here the shared encoder runs up to layer3 on both crops, the two spatial feature maps are compared
+    position by position ([pre, post, |post - pre|] -> 1x1 conv), and layer4 then looks for change patterns
+    in that fused map before pooling.
+    """
+    arch = "siamese_fm"
+
+    def __init__(self, pretrained=True, dropout=0.3):
+        super().__init__()
+        self.encoder = resnet18_encoder(pretrained)                     # stem + layer1-3 are shared
+        self.fuse = nn.Sequential(nn.Conv2d(256 * 3, 256, 1, bias=False), nn.BatchNorm2d(256), nn.ReLU(inplace=True))
+        self.head = head(512, dropout)
+
+    def _layer3(self, x):
+        e = self.encoder
+        return e.layer3(e.layer2(e.layer1(e.maxpool(e.relu(e.bn1(e.conv1(x)))))))
+
+    def fused_forward(self, pre, post):
+        """Returns (fused layer4 activation [B,512,h,w] for Grad-CAM, logits)."""
+        a_pre, a_post = self._layer3(pre), self._layer3(post)
+        act = self.encoder.layer4(self.fuse(torch.cat([a_pre, a_post, (a_post - a_pre).abs()], dim=1)))
+        return act, self.head(torch.flatten(self.encoder.avgpool(act), 1))
+
+    def forward(self, pre, post):
+        return self.fused_forward(pre, post)[1]
+
+
 class PostOnlyNet(nn.Module):
     """Baseline: looks only at the post-disaster crop."""
     arch = "post"
@@ -57,7 +87,7 @@ class PostOnlyNet(nn.Module):
 
 
 def build_model(arch: str, pretrained=True, dropout=0.3) -> nn.Module:
-    return {"siamese": SiameseDamageNet, "post": PostOnlyNet}[arch](pretrained=pretrained, dropout=dropout)
+    return {"siamese": SiameseDamageNet, "siamese_fm": SiameseFMNet, "post": PostOnlyNet}[arch](pretrained=pretrained, dropout=dropout)
 
 
 class FocalLoss(nn.Module):

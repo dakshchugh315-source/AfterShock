@@ -57,7 +57,7 @@ def test_ingest_splits_by_tile(world):
 
 def test_models_and_losses():
     pre, post = torch.randn(2, 3, 64, 64), torch.randn(2, 3, 64, 64)
-    for arch in ("siamese", "post"):
+    for arch in ("siamese", "siamese_fm", "post"):
         out = build_model(arch, pretrained=False)(pre, post)
         assert out.shape == (2, 4)
     loss = FocalLoss(torch.ones(4))(torch.randn(5, 4, requires_grad=True), torch.tensor([0, 1, 2, 3, 0]))
@@ -116,3 +116,20 @@ def test_hotspots_and_spatial_query(world, trained):
     lon, lat = hs[0]["lon"], hs[0]["lat"]
     near = db.buildings_near(lon, lat, 200, "smoke", pred_idx=3, min_conf=0.8)
     assert near and all(haversine_m(lon, lat, r[1], r[2]) <= 200 for r in near)
+
+
+def test_sql_ai_layer(tmp_path):
+    """Trigger queues uncertain predictions; views and SQL functions work."""
+    from aftershock.db import DB
+    from aftershock.sqlai import install, register_functions
+    db = DB(f"sqlite:///{(tmp_path / 't.db').as_posix()}")
+    db.init_schema()
+    install(db)
+    register_functions(db.conn)
+    db.upsert("buildings", ["uid", "disaster", "split", "label_idx"], [("a", "d", "test", 3), ("b", "d", "test", 0)])
+    db.upsert("predictions", ["uid", "model_version", "pred_idx", "p_no", "p_minor", "p_major", "p_destroyed", "confidence", "uncertainty"],
+              [("a", "m", 3, 0.0, 0.0, 0.1, 0.9, 0.9, 0.2), ("b", "m", 1, 0.3, 0.4, 0.2, 0.1, 0.4, 0.9)])
+    assert [r[0] for r in db.execute("SELECT uid FROM v_review_queue").fetchall()] == ["b"]
+    assert db.execute("SELECT expected_destroyed, hard_destroyed FROM v_disaster_damage").fetchone() == (1.0, 1)
+    db.execute("INSERT INTO human_reviews (uid, model_version, reviewer, label_idx) VALUES ('b', 'm', 'x', 0)")
+    assert db.execute("SELECT COUNT(*) FROM v_review_queue").fetchone()[0] == 0
