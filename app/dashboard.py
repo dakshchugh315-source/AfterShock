@@ -1337,19 +1337,27 @@ with tab_real:
         c2.plotly_chart(cm_fig(xv["confusion_field_rows"], f"xBD labels vs inspectors · same {xv['n']:,} buildings",
                                "xBD label"), width="stretch", config=PLOTLY_CFG)
         if mv["n"]:
-            comp = pd.DataFrame([
-                {"compared with inspectors": f"Model ({version})", "buildings": mv["n"],
-                 "same class": mv["exact"] * 100, "destroyed: accuracy": mv["destroyed"]["accuracy"] * 100,
-                 "destroyed: recall": mv["destroyed"]["recall"] * 100,
-                 "destroyed: precision": mv["destroyed"]["precision"] * 100},
-                {"compared with inspectors": "xBD labels (human annotators)", "buildings": xv["n"],
-                 "same class": xv["exact"] * 100, "destroyed: accuracy": xv["destroyed"]["accuracy"] * 100,
-                 "destroyed: recall": xv["destroyed"]["recall"] * 100,
-                 "destroyed: precision": xv["destroyed"]["precision"] * 100}])
+            def _row(name, r):
+                return {"compared with inspectors": name, "buildings": r["n"], "same class": r["exact"] * 100,
+                        "destroyed: accuracy": r["destroyed"]["accuracy"] * 100,
+                        "destroyed: recall": r["destroyed"]["recall"] * 100,
+                        "destroyed: precision": r["destroyed"]["precision"] * 100}
+            # every model with stored predictions, scored on the same inspected test buildings, plus the xBD labels
+            rows_cmp = []
+            for v in sorted(versions, key=lambda v: val_scores.get(v, -1), reverse=True):
+                rv = fieldcheck.compare(db, fd, v).get("model_vs_field", {"n": 0})
+                if rv["n"]:
+                    tag = " · final" if v == final_version else ""
+                    rows_cmp.append(_row(f"Model: {v}{tag}", rv))
+            rows_cmp.append(_row("xBD labels (human annotators)", xv))
+            comp = pd.DataFrame(rows_cmp)
+            st.markdown("#### All models vs the inspectors")
             pct = {c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%.1f%%")
                    for c in ["same class", "destroyed: accuracy", "destroyed: recall", "destroyed: precision"]}
-            st.dataframe(comp, hide_index=True, width="stretch", height=38 + 35 * 2, column_config=pct)
-            st.caption(f"Same {mv['n']:,} test buildings in both rows, so the numbers compare directly. "
+            st.dataframe(comp, hide_index=True, width="stretch", height=38 + 35 * len(comp), column_config=pct)
+            same_n = len({r["buildings"] for r in rows_cmp}) == 1
+            st.caption(f"{'Same' if same_n else 'Up to'} {mv['n']:,} test buildings in every row, so the numbers compare "
+                       f"directly. Models are ordered by validation macro-F1. "
                        f"The xBD labels were drawn by human annotators from the same satellite images; the model "
                        f"learned from such labels. On all {xall['n']:,} matched buildings (every split) the xBD "
                        f"labels agree {xall['destroyed']['accuracy']:.1%} on destroyed vs not.")
