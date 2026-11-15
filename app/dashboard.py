@@ -983,12 +983,18 @@ with tab_prob:
                                     hovertemplate="p_minor %{x:.2f}<br>p_major %{y:.2f}<br>p_destroyed %{z:.2f}"
                                                   f"<extra>{cls_name}</extra>")
         axis = dict(range=[0, 1], gridcolor=GRID, backgroundcolor="rgba(0,0,0,0)", showbackground=False)
-        fig3d.update_layout(height=460, margin=dict(l=0, r=0, t=60, b=0),
+        # camera far enough back that all three axes fit; the "Reset camera" button returns here
+        fig3d.update_layout(height=560, margin=dict(l=0, r=0, t=60, b=0),
                             scene=dict(xaxis=dict(title="p_minor", **axis), yaxis=dict(title="p_major", **axis),
                                        zaxis=dict(title="p_destroyed", **axis), aspectmode="cube",
-                                       camera=dict(eye=dict(x=1.25, y=1.1, z=0.75))))
+                                       camera=dict(eye=dict(x=1.45, y=1.3, z=0.85), center=dict(x=0, y=0, z=-0.1))),
+                            scene_dragmode="orbit")
+        # 3D charts have no +/- buttons, so mouse-wheel zoom is switched ON here (it is off on the 2D charts)
+        cfg3d = {**PLOTLY_CFG, "scrollZoom": True,
+                 "modeBarButtonsToRemove": PLOTLY_CFG["modeBarButtonsToRemove"] + ["resetCameraDefault3d"]}
         st.plotly_chart(plotly_theme(fig3d, f"Stored class probabilities, {len(pdf3):,} test buildings"),
-                        width="stretch", config=PLOTLY_CFG)
+                        width="stretch", config=cfg3d)
+        st.caption("Drag to rotate · scroll (or pinch) to zoom · right-drag to pan · toolbar ↺ (reset camera) brings back this view.")
     else:
         st.info("No test-split predictions for this disaster with this model.")
 
