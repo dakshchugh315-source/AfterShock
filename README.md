@@ -4,6 +4,16 @@
 
 > Course project · *Data Management and AI Integration* · Bennett University · Daksh Chugh
 
+## Live demo and documents
+
+| | |
+|---|---|
+| 🌐 **Live dashboard** | **https://aftershock-65s8t49dssedatgfw5zpv8.streamlit.app/** (pilot database, 3 disasters; may take a minute to wake up) |
+| 📊 **Presentation (24 slides)** | [PowerPoint](docs/AfterShock_Presentation.pptx) · [PDF](docs/AfterShock_Presentation.pdf) |
+| 🗄️ **Database & SQL report** | [PDF](docs/AfterShock_SQL_Report.pdf): ER diagram, keys, constraints, indexes, views, triggers |
+| 🏗️ **Architecture & real-world validation** | [PDF](docs/AfterShock_Architecture_RealWorld_Report.pdf): data flow, model, CAL FIRE comparison |
+| 📄 **Full project report** | [PDF](docs/Project_Report.pdf) |
+
 ---
 
 ## Why
