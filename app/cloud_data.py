@@ -24,7 +24,21 @@ def ensure() -> Path:
 
     @st.cache_resource(show_spinner=False)
     def _download(repo_id: str, folder: str) -> str:
-        return snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=folder, token=False)
+        # The bundle has ~420 files. Shared cloud servers sometimes get a temporary refusal from Hugging Face
+        # (e.g. too many requests), so download with few parallel workers and retry with a growing pause.
+        # Files that already arrived are skipped on the next attempt.
+        import time
+        for attempt in range(1, 7):
+            try:
+                return snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=folder,
+                                         token=False, max_workers=2)
+            except Exception as err:  # network / rate-limit errors from huggingface_hub
+                if attempt == 6:
+                    raise
+                wait = 15 * attempt
+                print(f"[aftershock] download attempt {attempt} failed ({type(err).__name__}); retrying in {wait}s",
+                      flush=True)
+                time.sleep(wait)
 
     # runs before st.set_page_config, so no visible element here; Streamlit shows "Running..." meanwhile
     print(f"[aftershock] data bundle {repo} -> {target}", flush=True)
